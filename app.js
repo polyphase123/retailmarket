@@ -236,6 +236,7 @@
     el.cardRapGroups = document.getElementById("cardRapGroups");
     el.cardRapMw = document.getElementById("cardRapMw");
     el.cardBaseRate = document.getElementById("cardBaseRate");
+    el.cardWesmRate = document.getElementById("cardWesmRate");
     el.cardPipelineVal = document.getElementById("cardPipelineVal");
     el.cardPenetrationVal = document.getElementById("cardPenetrationVal");
     
@@ -620,9 +621,14 @@
     if (el.cardRapGroups) el.cardRapGroups.innerHTML = `${du.rap_groups ? du.rap_groups : 0} <span class="stat-unit">grp</span>`;
     if (el.cardRapMw) el.cardRapMw.textContent = `${(du.rap_mw || 0).toFixed(1)} MW`;
 
-    // Populate Sub-strip (Verified URR Base Rate, Next Wave, Switching Penetration)
+    // Populate Sub-strip (Verified URR Base Rate, WESM Spot Rate, Switching Penetration)
     const formattedRate = du.base_rate ? (du.base_rate.startsWith("₱") ? du.base_rate : `₱${du.base_rate}`) : "₱7.3300";
     if (el.cardBaseRate) el.cardBaseRate.textContent = `${formattedRate}/kWh`;
+    if (el.cardWesmRate) {
+      const wRate = du.wesm_data?.latest_rate || 5.4513;
+      el.cardWesmRate.textContent = `₱${wRate.toFixed(4)}`;
+      el.cardWesmRate.title = `WESM Spot: ₱${wRate.toFixed(4)}/kWh (${du.wesm_data?.genmix_pct || 15}% captive mix)`;
+    }
     if (el.bmDuRate) el.bmDuRate.textContent = `${formattedRate}`;
     if (el.bmDuSub) {
       el.bmDuSub.textContent = du.urr_month ? `📅 ${du.urr_month} URR filing` : "Regulated URR captive tariff";
@@ -748,20 +754,28 @@
     const carvePct = summary.carveout_share_pct || 0;
     const lockedPct = (100 - carvePct).toFixed(1);
     const urrMonthLabel = summary.latest_urr_month || du.urr_month || "August 2026 URR";
+    const wesmRateVal = du.wesm_data?.latest_rate || 5.4513;
+    const wesmMix = du.wesm_data?.genmix_pct || 15;
+    const wesmGwh = ((du.wesm_data?.annual_kwh || 0) / 1e6).toFixed(1);
+    const wesmCostB = ((du.wesm_data?.annual_cost || 0) / 1e9).toFixed(2);
 
     el.cardPsaSummary.innerHTML = `
-      <div class="psa-summary-stats">
+      <div class="psa-summary-stats" style="grid-template-columns: repeat(5, 1fr);">
         <div class="psa-summary-stat">
           <div class="pstat-lbl">Contracts</div>
-          <div class="pstat-val">${summary.total_contracts}</div>
+          <div class="pstat-val">${summary.total_contracts} PSAs</div>
         </div>
         <div class="psa-summary-stat">
-          <div class="pstat-lbl">Contracted MW</div>
+          <div class="pstat-lbl">Bilateral MW</div>
           <div class="pstat-val">${summary.total_contracted_mw.toLocaleString()} <span style="font-size:7px; font-weight:600;">MW</span></div>
         </div>
         <div class="psa-summary-stat">
-          <div class="pstat-lbl">Captive Base Rate</div>
+          <div class="pstat-lbl">Captive Base</div>
           <div class="pstat-val" style="color:#2563eb;">${du.base_rate ? (du.base_rate.startsWith("₱") ? du.base_rate : `₱${du.base_rate}`) : "₱7.3300"}</div>
+        </div>
+        <div class="psa-summary-stat">
+          <div class="pstat-lbl" style="color:#7c3aed;">URR WESM Spot</div>
+          <div class="pstat-val" style="color:#7c3aed;" title="${wesmMix}% captive generation mix">₱${wesmRateVal.toFixed(4)}</div>
         </div>
         <div class="psa-summary-stat">
           <div class="pstat-lbl">Filing Month</div>
@@ -775,25 +789,74 @@
         </div>
         <div class="psa-progress-legend">
           <span class="psa-legend-item carved">🟢 Carve-Out: ${summary.carved_out_mw.toFixed(1)} MW (${carvePct}%)</span>
-          <span class="psa-legend-item locked">🔴 Locked TOP: ${summary.locked_mw.toFixed(1)} MW (${lockedPct}%)</span>
+          <span class="psa-legend-item" style="color:#7c3aed;">⚡ Spot Mix: ${wesmMix}% (${wesmGwh} GWh)</span>
+          <span class="psa-legend-item locked">🔴 Locked: ${summary.locked_mw.toFixed(1)} MW</span>
+        </div>
+      </div>
+    `;
+
+    const wesmCardHtml = `
+      <div class="psa-card psa-wesm">
+        <div class="psa-header-row">
+          <div class="psa-supplier-title" style="color:#6b21a8;">WHOLESALE ELECTRICITY SPOT MARKET (WESM)</div>
+          <span class="psa-tech-badge tech-wesm">⚡ SPOT PROCUREMENT</span>
+        </div>
+
+        <div class="psa-metrics-row" style="background:#faf5ff; border-color:#e9d5ff;">
+          <div class="psa-metric">
+            <span class="psa-lbl" style="color:#7c3aed;">Spot Generation Mix</span>
+            <span class="psa-val" style="color:#6b21a8;">${wesmMix}% <span class="psa-sub">captive</span></span>
+          </div>
+          <div class="psa-metric highlight">
+            <span class="psa-lbl" style="color:#7c3aed;">Latest URR Spot Rate</span>
+            <span class="psa-val" style="color:#7c3aed;">₱${wesmRateVal.toFixed(4)}<span class="psa-sub">/kWh</span></span>
+          </div>
+          <div class="psa-metric">
+            <span class="psa-lbl" style="color:#7c3aed;">URR Filing Month</span>
+            <span class="psa-val" style="color:#059669; font-size:8.5px; font-weight:700;">📅 ${escapeHtml(urrMonthLabel)}</span>
+          </div>
+        </div>
+
+        <div class="psa-details-grid">
+          <div class="psa-detail-item">
+            <span class="psa-lbl">Market Settlement</span>
+            <span class="psa-val-txt"><code class="docket-code" style="color:#7c3aed; background:#f5f3ff; border-color:#ddd6fe;">🏛️ IEMOP Gross Pool Market Clearing</code></span>
+          </div>
+          <div class="psa-detail-item">
+            <span class="psa-lbl">Annual Volume &amp; Spend</span>
+            <span class="psa-val-txt">⚡ ${wesmGwh} GWh / yr (₱${wesmCostB}B)</span>
+          </div>
+        </div>
+
+        <div class="psa-carveout-box" style="background:#f5f3ff; border:1px solid #ddd6fe;">
+          <div class="psa-status-badge" style="color:#7c3aed; font-weight:800;">
+            ⚡ Variable Spot Exposure (Hourly Net Settlement)
+          </div>
+          <div class="psa-carveout-text" style="color:#5b21b6;">Procured on wholesale spot market to balance captive customer load without locked Take-or-Pay penalties.</div>
         </div>
       </div>
     `;
 
     // Filter PSAs
     let filtered = psas;
-    if (state.psaFilter === "carved") {
+    let includeWesm = state.psaFilter === "all" || state.psaFilter === "wesm";
+
+    if (state.psaFilter === "wesm") {
+      filtered = [];
+    } else if (state.psaFilter === "carved") {
       filtered = psas.filter((p) => p.carveout_status && (p.carveout_status.includes("Carve-Out") || p.carveout_status.includes("Protected")));
+      includeWesm = false;
     } else if (state.psaFilter === "locked") {
       filtered = psas.filter((p) => p.carveout_status && p.carveout_status.includes("Locked"));
+      includeWesm = false;
     }
 
-    if (filtered.length === 0) {
+    if (filtered.length === 0 && !includeWesm) {
       el.cardPsasList.innerHTML = `<div style="text-align:center; padding:15px; font-size:9.5px; color:#94a3b8;">No contracts matching this filter</div>`;
       return;
     }
 
-    el.cardPsasList.innerHTML = filtered
+    const psasCardsHtml = filtered
       .map((p) => {
         const isCarved = p.carveout_status && (p.carveout_status.includes("Carve-Out") || p.carveout_status.includes("Protected"));
         const techClean = (p.tech || "default").toLowerCase().replace(/[^a-z]/g, "");
@@ -846,6 +909,8 @@
       `;
       })
       .join("");
+
+    el.cardPsasList.innerHTML = (includeWesm ? wesmCardHtml : "") + psasCardsHtml;
   }
 
   /**
@@ -1018,6 +1083,11 @@
         const rateB = parseFloat((b.base_rate || "0").replace(/[^\d.]/g, "")) || 0;
         return rateB - rateA;
       }
+      if (state.dirSortBy === "wesm_rate") {
+        const wA = a.wesm_data?.latest_rate || 0;
+        const wB = b.wesm_data?.latest_rate || 0;
+        return wB - wA;
+      }
       if (state.dirSortBy === "psas") {
         const mwA = a.psa_summary?.total_contracted_mw || 0;
         const mwB = b.psa_summary?.total_contracted_mw || 0;
@@ -1052,6 +1122,9 @@
         } else if (state.dirSortBy === "base_rate") {
           metricVal = du.base_rate || "₱7.3300";
           metricSub = du.urr_month ? `${du.urr_month} URR` : "URR Captive Rate";
+        } else if (state.dirSortBy === "wesm_rate") {
+          metricVal = `₱${(du.wesm_data?.latest_rate || 0).toFixed(4)}/kWh`;
+          metricSub = `${du.wesm_data?.genmix_pct || 0}% Spot Gen Mix`;
         } else if (state.dirSortBy === "psas") {
           const s = du.psa_summary || {};
           metricVal = `${s.total_contracts || 0} PSAs (${s.total_contracted_mw || 0} MW)`;
@@ -1062,11 +1135,14 @@
         }
 
         const psaSummary = du.psa_summary || {};
-        const psaBadge = psaSummary.total_contracts > 0
-          ? `<span class="badge-tag" style="background:#f1f5f9; color:#334155;">📜 ${psaSummary.total_contracts} PSAs (${psaSummary.carveout_share_pct}% Carved)</span>`
+        const psaBadge = (psaSummary.total_contracts > 0 && state.dirSortBy !== "psas")
+          ? `<span class="badge-tag" style="background:#f1f5f9; color:#475569;">📜 ${psaSummary.total_contracts} PSAs</span>`
           : "";
         const urrMonthBadge = du.urr_month
           ? `<span class="badge-tag" style="background:#eff6ff; color:#1d4ed8; font-weight:700;">📅 ${escapeHtml(du.urr_month)}</span>`
+          : "";
+        const wesmBadge = state.dirSortBy !== "wesm_rate" && du.wesm_data?.latest_rate
+          ? `<span class="badge-tag wesm" style="background:#f5f3ff; color:#7c3aed; font-weight:700;">⚡ WESM ₱${du.wesm_data.latest_rate.toFixed(2)}</span>`
           : "";
 
         return `
@@ -1076,8 +1152,8 @@
               <span class="dir-card-acr">${escapeHtml(du.acronym)}</span>
               <span class="badge-tag grid">${escapeHtml(du.grid)}</span>
               ${urrMonthBadge}
+              ${wesmBadge}
               ${psaBadge}
-              <span class="badge-tag ongrid">⚡ On-Grid</span>
             </div>
             <div class="dir-card-sub">${escapeHtml(du.name)} · ${escapeHtml(du.province)}</div>
           </div>
@@ -1797,6 +1873,16 @@
             <td>URR Base Rate &amp; Period</td>
             <td><strong>${rate1}/kWh</strong><br><span style="font-size:8px; color:#059669; font-weight:700;">📅 ${escapeHtml(du1.urr_month || "URR Filing")}</span></td>
             <td><strong>${rate2}/kWh</strong><br><span style="font-size:8px; color:#059669; font-weight:700;">📅 ${escapeHtml(du2.urr_month || "URR Filing")}</span></td>
+          </tr>
+          <tr>
+            <td>Latest URR WESM Spot Rate</td>
+            <td><strong style="color:#7c3aed;">₱${(du1.wesm_data?.latest_rate || 5.4513).toFixed(4)}/kWh</strong><br><span style="font-size:8px; color:#7c3aed; font-weight:700;">⚡ ${du1.wesm_data?.genmix_pct || 15}% Spot Mix</span></td>
+            <td><strong style="color:#7c3aed;">₱${(du2.wesm_data?.latest_rate || 5.4513).toFixed(4)}/kWh</strong><br><span style="font-size:8px; color:#7c3aed; font-weight:700;">⚡ ${du2.wesm_data?.genmix_pct || 15}% Spot Mix</span></td>
+          </tr>
+          <tr>
+            <td>Annual WESM Procurement</td>
+            <td><strong>${((du1.wesm_data?.annual_kwh || 0)/1e6).toFixed(1)} GWh</strong> (₱${((du1.wesm_data?.annual_cost || 0)/1e9).toFixed(2)}B)</td>
+            <td><strong>${((du2.wesm_data?.annual_kwh || 0)/1e6).toFixed(1)} GWh</strong> (₱${((du2.wesm_data?.annual_cost || 0)/1e9).toFixed(2)}B)</td>
           </tr>
           <tr>
             <td>Bilateral PSAs Contracted</td>

@@ -134,10 +134,10 @@
             </div>
           </div>
 
-          <!-- Quick Regulatory Sub-strip (Base Rate, Next Wave, Switching Penetration) -->
+          <!-- Quick Regulatory Sub-strip (Base Rate, WESM Rate, Switching Penetration) -->
           <div class="regulatory-strip">
             <span>Base: <strong id="cardBaseRate">₱7.3300/kWh</strong></span>
-            <span>Next: <strong id="cardPipelineVal">50–99 kW (+6,626)</strong></span>
+            <span>WESM: <strong id="cardWesmRate" style="color:#7c3aed;">₱5.4513</strong></span>
             <span>Switch: <strong id="cardPenetrationVal">95.7%</strong></span>
           </div>
         </div>
@@ -194,9 +194,10 @@
               <div class="drawer-heading">📜 Bilateral Power Supply Agreements (PSAs)</div>
               <div id="cardPsaSummary" class="psa-portfolio-summary"></div>
               <div class="psa-filter-row" id="psaFilterRow">
-                <button class="psa-chip active" data-pfilter="all">All PSAs</button>
-                <button class="psa-chip carved" data-pfilter="carved">🟢 Carve-Out Protected</button>
+                <button class="psa-chip active" data-pfilter="all">All (PSAs + WESM)</button>
+                <button class="psa-chip carved" data-pfilter="carved">🟢 Carve-Out</button>
                 <button class="psa-chip locked" data-pfilter="locked">🔴 Locked TOP</button>
+                <button class="psa-chip wesm" data-pfilter="wesm">⚡ WESM Spot</button>
               </div>
               <div class="psas-list" id="cardPsasList"></div>
             </div>
@@ -252,7 +253,8 @@
           <button class="dir-sort-chip" data-sort="geop_eus">GEOP EUs</button>
           <button class="dir-sort-chip" data-sort="rap_groups">RAP Grps</button>
           <button class="dir-sort-chip" data-sort="base_rate">Base Rate</button>
-          <button class="dir-sort-chip" data-sort="psas">📜 PSAs / Carve-Out</button>
+          <button class="dir-sort-chip" data-sort="wesm_rate">⚡ WESM Rate</button>
+          <button class="dir-sort-chip" data-sort="psas">📜 PSAs</button>
           <button class="dir-sort-chip" data-sort="switching">Switching %</button>
         </div>
       </div>

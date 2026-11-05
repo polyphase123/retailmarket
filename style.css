@@ -55,7 +55,7 @@
 html, body {
   width: 100%;
   height: 100%;
-  background: #090d16;
+  background: #ffffff;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   color: var(--text-main);
   overflow: hidden;
@@ -90,78 +90,74 @@ html, body {
 }
 
 /* ==========================================================================
-   Mobile Phone Device Canvas (395px x 844px iPhone standard)
+   App Canvas — Native Fullscreen Mobile-First Architecture
+   All mobile phones (Android Samsung Galaxy S24+, iPhones, Pixel, etc.)
+   render edge-to-edge with zero artificial gaps.
    ========================================================================== */
 #app {
   position: relative;
   width: 100%;
-  max-width: 395px;
+  max-width: 100%;
   height: 100%;
-  max-height: 844px;
+  height: 100dvh;
+  max-height: 100dvh;
   background: #ffffff;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border-radius: 42px;
-  box-shadow:
-    0 25px 65px -15px rgba(0, 0, 0, 0.65),
-    0 0 0 10px #1e293b,
-    0 0 0 12px #334155;
+  border-radius: 0;
+  box-shadow: none;
   transition: width 0.2s ease, height 0.2s ease;
 }
 
-/* Apple Notch / Dynamic Island */
+/* Hidden on all physical mobile devices */
 .device-notch {
-  position: absolute;
-  top: 9px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 105px;
-  height: 24px;
-  background: #000000;
-  border-radius: 20px;
-  z-index: 1000;
-  pointer-events: none;
+  display: none;
 }
 
-/* Responsive scaling for laptop screens */
-@media (max-height: 900px) and (min-width: 481px) {
-  #app {
-    max-height: calc(100dvh - 28px);
-    max-width: calc((100dvh - 28px) * 0.485);
-  }
-}
-
-/* Extra top clearance ONLY on desktop mockup where fake notch exists */
-@media (min-width: 481px) {
-  .top-panel {
-    padding-top: 32px !important;
-  }
-  .view-header {
-    padding-top: 34px !important;
-  }
-}
-
-/* Edge-to-edge native fullscreen on actual mobile phones */
-@media (max-width: 480px) {
-  html, body {
-    background: #ffffff;
-  }
-  #app {
-    max-width: 100% !important;
-    max-height: 100% !important;
-    height: 100dvh;
-    border-radius: 0 !important;
-    box-shadow: none !important;
-  }
-  .device-notch {
-    display: none;
-  }
+/* PWA Standalone Mode (Only when installed to Home Screen on iOS/Android) */
+@media (display-mode: standalone) {
   .top-panel {
     padding-top: calc(6px + env(safe-area-inset-top, 0px)) !important;
   }
   .view-header {
     padding-top: calc(8px + env(safe-area-inset-top, 0px)) !important;
+  }
+}
+
+/* Desktop Presentation Simulator: Mockup frame ONLY on wide desktop screens with mouse pointer */
+@media (min-width: 860px) and (min-height: 620px) and (hover: hover) {
+  html, body {
+    background: #090d16;
+  }
+  #app {
+    max-width: 412px;
+    max-height: 890px;
+    height: 94vh;
+    border-radius: 44px;
+    box-shadow:
+      0 25px 65px -15px rgba(0, 0, 0, 0.65),
+      0 0 0 10px #1e293b,
+      0 0 0 12px #334155;
+  }
+  .device-notch {
+    display: block;
+    position: absolute;
+    top: 9px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 105px;
+    height: 24px;
+    background: #000000;
+    border-radius: 20px;
+    z-index: 1000;
+    pointer-events: none;
+  }
+  .top-panel {
+    padding-top: 34px !important;
+  }
+  .view-header {
+    padding-top: 36px !important;
   }
 }
 
@@ -196,7 +192,7 @@ html, body {
 
 /* Standard View Header for Sub-views (Directory, Calc, Suppliers, FAQ) */
 .view-header {
-  padding: calc(8px + env(safe-area-inset-top, 0px)) 14px 10px 14px;
+  padding: 8px 14px 10px 14px;
   background: #ffffff;
   border-bottom: 1px solid var(--border-light);
   flex-shrink: 0;
@@ -295,7 +291,7 @@ html, body {
   left: 0;
   right: 0;
   z-index: 100;
-  padding: calc(6px + env(safe-area-inset-top, 0px)) 10px 4px 10px;
+  padding: 6px 10px 4px 10px;
   pointer-events: none;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(255, 255, 255, 0.90) 75%, rgba(255, 255, 255, 0) 100%);
   backdrop-filter: blur(10px);
@@ -1202,6 +1198,12 @@ html, body {
   color: #ffffff;
 }
 
+.psa-chip.wesm.active {
+  background: #7c3aed;
+  border-color: #7c3aed;
+  color: #ffffff;
+}
+
 .psas-list {
   display: flex;
   flex-direction: column;
@@ -1226,6 +1228,11 @@ html, body {
 
 .psa-card.psa-locked {
   border-left: 3.5px solid #ef4444;
+}
+
+.psa-card.psa-wesm {
+  border-left: 3.5px solid #7c3aed;
+  background: #fdfcff;
 }
 
 .psa-header-row {
@@ -1260,6 +1267,7 @@ html, body {
 .tech-bunker, .tech-diesel, .tech-bunkerdiesel { background: #fdf2f8; color: #be185d; border: 1px solid #fbcfe8; }
 .tech-gas, .tech-lng, .tech-natgas { background: #ecfeff; color: #0e7490; border: 1px solid #a5f3fc; }
 .tech-biomass { background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; }
+.tech-wesm, .tech-spot { background: #f5f3ff; color: #7c3aed; border: 1px solid #ddd6fe; }
 .tech-thermalre, .tech-default { background: #f8fafc; color: #64748b; border: 1px solid #e2e8f0; }
 
 .psa-metrics-row {
@@ -1448,7 +1456,9 @@ html, body {
 .dir-card-title-row {
   display: flex;
   align-items: center;
-  gap: 5px;
+  flex-wrap: wrap;
+  row-gap: 2px;
+  column-gap: 4px;
 }
 
 .dir-card-acr {
@@ -1469,6 +1479,7 @@ html, body {
 .dir-card-right {
   text-align: right;
   flex-shrink: 0;
+  min-width: 78px;
 }
 
 .dir-card-main-val {
