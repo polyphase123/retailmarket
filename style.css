@@ -41,8 +41,8 @@
   --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.12), 0 4px 6px -4px rgba(0, 0, 0, 0.05);
   --shadow-sheet: 0 -4px 20px rgba(0, 0, 0, 0.12);
   
-  --safe-bottom: env(safe-area-inset-bottom, 16px);
-  --safe-top: env(safe-area-inset-top, 10px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-top: env(safe-area-inset-top, 0px);
 }
 
 * {
@@ -132,6 +132,16 @@ html, body {
   }
 }
 
+/* Extra top clearance ONLY on desktop mockup where fake notch exists */
+@media (min-width: 481px) {
+  .top-panel {
+    padding-top: 32px !important;
+  }
+  .view-header {
+    padding-top: 34px !important;
+  }
+}
+
 /* Edge-to-edge native fullscreen on actual mobile phones */
 @media (max-width: 480px) {
   html, body {
@@ -146,6 +156,12 @@ html, body {
   }
   .device-notch {
     display: none;
+  }
+  .top-panel {
+    padding-top: calc(6px + env(safe-area-inset-top, 0px)) !important;
+  }
+  .view-header {
+    padding-top: calc(8px + env(safe-area-inset-top, 0px)) !important;
   }
 }
 
@@ -180,7 +196,7 @@ html, body {
 
 /* Standard View Header for Sub-views (Directory, Calc, Suppliers, FAQ) */
 .view-header {
-  padding: 34px 14px 10px 14px;
+  padding: calc(8px + env(safe-area-inset-top, 0px)) 14px 10px 14px;
   background: #ffffff;
   border-bottom: 1px solid var(--border-light);
   flex-shrink: 0;
@@ -240,6 +256,7 @@ html, body {
   -webkit-overflow-scrolling: touch;
   scroll-behavior: smooth;
   overscroll-behavior-y: contain;
+  padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px));
 }
 
 /* ==========================================================================
@@ -278,7 +295,7 @@ html, body {
   left: 0;
   right: 0;
   z-index: 100;
-  padding: 32px 10px 4px 10px;
+  padding: calc(6px + env(safe-area-inset-top, 0px)) 10px 4px 10px;
   pointer-events: none;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(255, 255, 255, 0.90) 75%, rgba(255, 255, 255, 0) 100%);
   backdrop-filter: blur(10px);
@@ -656,7 +673,7 @@ html, body {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 56px; /* Exactly aligns directly above the 56px bottom-nav-bar */
+  bottom: calc(56px + env(safe-area-inset-bottom, 0px)); /* Exactly aligns directly above the bottom-nav-bar */
   z-index: 120;
   background: #ffffff;
   border-radius: 20px 20px 0 0;
@@ -2138,16 +2155,17 @@ html, body {
   left: 0;
   right: 0;
   bottom: 0;
-  height: 56px;
+  height: calc(56px + env(safe-area-inset-bottom, 0px));
   background: rgba(255, 255, 255, 0.95);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   border-top: 1px solid var(--border);
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-around;
   z-index: 150;
-  padding-bottom: 2px;
+  padding-top: 4px;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 .nav-tab {
@@ -2217,7 +2235,7 @@ html, body {
   flex-direction: column;
   box-shadow: var(--shadow-lg);
   animation: slideUp 0.22s cubic-bezier(0.16, 1, 0.3, 1);
-  padding-bottom: 16px;
+  padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
 }
 
 @keyframes slideUp {
