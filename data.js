@@ -64,9 +64,9 @@ window.RETAIL_MARKET_DATA = {
       "phase_5_demand_mw": 826.28
     },
     "offgrid_exempt_summary": {
-      "total_exempt_dus": 21,
+      "total_exempt_dus": 19,
       "legal_basis": "EPIRA Section 34 / SPUG Missionary Exemption",
-      "description": "21 island utilities operate isolated missionary micro-grids with no physical/commercial link to WESM. RCOA and GEOP cannot be implemented until physical grid interconnection is achieved.",
+      "description": "19 island utilities operate isolated missionary micro-grids with no physical/commercial link to WESM. RCOA and GEOP cannot be implemented until physical grid interconnection is achieved.",
       "list": [
         {
           "acronym": "PALECO",
@@ -150,20 +150,6 @@ window.RETAIL_MARKET_DATA = {
           "name": "Bantayan Island Electric Cooperative",
           "province": "Cebu (Bantayan Island)",
           "grid": "Off-Grid Visayas",
-          "reason": "Exempt under EPIRA Sec. 34 (Off-Grid Missionary SPUG Island)"
-        },
-        {
-          "acronym": "CAMELCO",
-          "name": "Camiguin Electric Cooperative",
-          "province": "Camiguin Island",
-          "grid": "Off-Grid Mindanao",
-          "reason": "Exempt under EPIRA Sec. 34 (Off-Grid Missionary SPUG Island)"
-        },
-        {
-          "acronym": "SIARELCO",
-          "name": "Siargao Electric Cooperative",
-          "province": "Surigao del Norte (Siargao Island)",
-          "grid": "Off-Grid Mindanao",
           "reason": "Exempt under EPIRA Sec. 34 (Off-Grid Missionary SPUG Island)"
         },
         {
@@ -15262,20 +15248,6 @@ window.RETAIL_MARKET_DATA = {
       "reason": "Exempt under EPIRA Sec. 34 (Off-Grid Missionary SPUG Island)"
     },
     {
-      "acronym": "CAMELCO",
-      "name": "Camiguin Electric Cooperative",
-      "province": "Camiguin Island",
-      "grid": "Off-Grid Mindanao",
-      "reason": "Exempt under EPIRA Sec. 34 (Off-Grid Missionary SPUG Island)"
-    },
-    {
-      "acronym": "SIARELCO",
-      "name": "Siargao Electric Cooperative",
-      "province": "Surigao del Norte (Siargao Island)",
-      "grid": "Off-Grid Mindanao",
-      "reason": "Exempt under EPIRA Sec. 34 (Off-Grid Missionary SPUG Island)"
-    },
-    {
       "acronym": "DIELCO",
       "name": "Dinagat Island Electric Cooperative",
       "province": "Dinagat Islands",
@@ -16522,7 +16494,10 @@ window.RETAIL_MARKET_DATA = {
       "period": "2025–2026 WESM Final True-Up",
       "operator": "IEMOP / PEMC",
       "volume_gwh": 17360.8,
-      "annual_spend_billion": 76.32
+      "annual_spend_billion": 76.32,
+      "luzon_gwh": 12512.8,
+      "visayas_gwh": 2992.9,
+      "mindanao_gwh": 1855.1
     },
     "retail_market": {
       "crem_wap": 5.83,

@@ -28,7 +28,8 @@
     calcKw: 150,
     calcDuId: "meralco",
     calcSupplierKey: "wap",
-    calcKwh: 65000,
+    calcKwh: 65700,
+    kwhTouched: false,
     calcRapMembers: 10,
     calcRapKwPerMember: 15,
 
@@ -62,18 +63,189 @@
   // Landmark utilities to show subtle preview label
   const LANDMARKS = new Set(["MERALCO", "VECO", "DLPC", "CEPALCO", "MORE"]);
 
-  // Market Benchmark Weighted Average Prices (WAP) from MOS Memo (Aug 2026)
+  // ---- Single source of truth: every market figure is read from data.js ----
+  const RD = window.RETAIL_MARKET_DATA || {};
+  const MP = RD.market_prices || {};
+  const SPOT_MKT = MP.spot_market || {};
+  const RETAIL_MKT = MP.retail_market || {};
+  const CAPTIVE_MKT = MP.captive_market || {};
+
+  // Market Benchmark Weighted Average Prices (WAP) — from data.js market_prices
   const MARKET_WAP = {
-    crem: 5.8300,
-    geop: 6.1200,
-    rap: 5.8400,
-    wesm: 4.4038,
+    crem: RETAIL_MKT.crem_wap ?? 5.83,
+    geop: RETAIL_MKT.geop_wap ?? 6.12,
+    rap: RETAIL_MKT.rap_wap ?? 5.84,
+    wesm: SPOT_MKT.national_gwap ?? 4.4038,
   };
+  const REGIONAL_GWAP = {
+    Luzon: SPOT_MKT.luzon_gwap,
+    Visayas: SPOT_MKT.visayas_gwap,
+    Mindanao: SPOT_MKT.mindanao_gwap,
+  };
+
+  // Calculator assumptions
+  const HOURS_PER_MONTH = 730;
+  const DEFAULT_LOAD_FACTOR = 0.6;   // used to suggest kWh from kW
+  const STALE_MONTHS = 6;            // captive rate older than this vs. report period is flagged
+
+  // ---- Helpers: rates, dates, data quality ----
+  const MONTH_IDX = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
+  const MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  function parseMonth(str) {
+    const m = String(str || "").match(/(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{4})/i);
+    return m ? new Date(parseInt(m[2], 10), MONTH_IDX[m[1].toLowerCase()], 1) : null;
+  }
+  function fmtMonth(str) {
+    const d = parseMonth(str);
+    return d ? `${MONTH_ABBR[d.getMonth()]} ${d.getFullYear()}` : (str ? String(str) : "Undated");
+  }
+  const REPORT_DATE = parseMonth(RD.summary?.report_period) || new Date(2026, 7, 1);
+  const REPORT_LABEL = fmtMonth(RD.summary?.report_period || "Aug 2026");
+  function monthsOld(str) {
+    const d = parseMonth(str);
+    if (!d) return null;
+    return (REPORT_DATE.getFullYear() - d.getFullYear()) * 12 + (REPORT_DATE.getMonth() - d.getMonth());
+  }
+  function isStaleRate(du) {
+    const age = monthsOld(du?.urr_month);
+    return age === null || age > STALE_MONTHS;
+  }
+  function rateNum(du) {
+    const m = String(du?.base_rate ?? "").match(/[\d.]+/);
+    return m ? parseFloat(m[0]) : null;
+  }
+  function fmtRate(du) {
+    const n = rateNum(du);
+    return n !== null ? `₱${n.toFixed(4)}` : "n/a";
+  }
+  function staleTag(du) {
+    if (!isStaleRate(du)) return "";
+    const age = monthsOld(du?.urr_month);
+    const why = age === null ? "undated captive rate" : `captive rate is ${age} months older than the ${REPORT_LABEL} market data`;
+    return ` <span class="stale-flag" title="${why}">${age === null ? "Undated" : "Old rate"}</span>`;
+  }
+  function isDistributionUtility(du) {
+    return (du?.type || "") !== "Transmission";
+  }
+  function regionalGwap(grid) {
+    return REGIONAL_GWAP[grid] ?? MARKET_WAP.wesm;
+  }
+  function duSpotRate(du) {
+    return du?.wesm_data?.latest_rate || regionalGwap(du?.grid);
+  }
+  function peso(n, dp = 4) {
+    return `₱${Number(n).toFixed(dp)}`;
+  }
+  function signedPeso(n) {
+    return `${n >= 0 ? "" : "−"}₱${Math.abs(Math.round(n)).toLocaleString()}`;
+  }
+
+  /**
+   * Data-quality checks, recomputed from data.js on every load,
+   * so they disappear automatically once the underlying data is fixed.
+   */
+  function runDataChecks() {
+    const dus = RD.dus || [];
+    const S = RD.summary || {};
+    const checks = [];
+    const sum = (k) => dus.reduce((a, d) => a + (Number(d[k]) || 0), 0);
+    const RIBBON_NOTE = "The map ribbon and directory add up the per-utility figures; the prices screen and supplier banners use the summary figure, so the two disagree.";
+    const cmp = (label, got, want, dp, detail = RIBBON_NOTE) => {
+      if (want === undefined || want === null) return;
+      if (Math.abs(got - want) > (dp ? 0.05 : 0)) {
+        checks.push({
+          level: "high",
+          title: `${label}: utilities add up to ${dp ? got.toFixed(2) : got.toLocaleString()}, summary says ${dp ? Number(want).toFixed(2) : Number(want).toLocaleString()}`,
+          detail,
+        });
+      }
+    };
+    cmp("CREM end-users", sum("crem_eus"), S.crem?.total_eus);
+    cmp("CREM MW", sum("crem_mw"), S.crem?.total_mw, true);
+    cmp("GEOP end-users", sum("geop_eus"), S.geop?.total_eus);
+    cmp("GEOP MW", sum("geop_mw"), S.geop?.total_mw, true);
+    cmp("RAP groups", sum("rap_groups"), S.rap?.total_groups);
+    cmp("RAP MW", sum("rap_mw"), S.rap?.total_mw, true);
+    const captive14 = [1, 2, 3, 4].reduce((a, i) => a + sum(`captive_p${i}_eus`), 0);
+    cmp("Captive eligible end-users (Phases I–IV)", captive14, S.captive_pipeline?.total_eligible_phases_1_4, false,
+      "Eligible customers still on the captive rate. A gap this large usually means one of the two counts covers a different scope (e.g. all eligible vs. not yet switched).");
+
+    const nonDu = dus.filter((d) => !isDistributionUtility(d));
+    if (nonDu.length) {
+      checks.push({
+        level: "medium",
+        title: `${dus.length} entries include ${nonDu.length} NGCP grid entries (${nonDu.map((d) => d.acronym).join(", ")})`,
+        detail: `So the app covers ${dus.length - nonDu.length} distribution utilities plus NGCP directly-connected customers. The RCOA roadmap uses 121 on-grid DUs; confirm which count should be shown.`,
+      });
+    }
+
+    const stale = dus.filter(isStaleRate);
+    if (stale.length) {
+      const undated = stale.filter((d) => monthsOld(d.urr_month) === null);
+      checks.push({
+        level: "high",
+        title: `${stale.length} of ${dus.length} captive rates are more than ${STALE_MONTHS} months older than the ${REPORT_LABEL} market data`,
+        detail: `Savings for these utilities compare an old captive rate against current retail prices.${undated.length ? ` ${undated.length} have no month at all (${undated.map((d) => d.acronym).join(", ")}).` : ""} Tagged “Old rate” wherever the rate appears.`,
+      });
+    }
+
+    const psas = dus.flatMap((d) => (d.psas || []).map((p) => ({ ...p, du: d.acronym })));
+    const placeholder = psas.filter((p) => /verification required/i.test(`${p.docket || ""} ${p.erc_case || ""}`));
+    if (placeholder.length) {
+      checks.push({
+        level: "medium",
+        title: `${placeholder.length} PSAs have a placeholder instead of an ERC case number`,
+        detail: `Shown as “Verification Required”. Utilities affected: ${[...new Set(placeholder.map((p) => p.du))].join(", ")}.`,
+      });
+    }
+    const zeroCost = psas.filter((p) => !p.annual_cost);
+    if (zeroCost.length) {
+      checks.push({
+        level: "medium",
+        title: `${zeroCost.length} of ${psas.length} PSAs have an annual cost of ₱0`,
+        detail: "Any total that sums PSA costs will be understated.",
+      });
+    }
+    const carve = psas.filter((p) => /carve-out/i.test(p.carveout_status || ""));
+    if (carve.length) {
+      checks.push({
+        level: "low",
+        title: `${carve.length} PSAs are labelled “Full Carve-Out”; ${psas.length - carve.length} are labelled “Locked”`,
+        detail: "These labels carry no source citation in the data. Confirm they come from the PSA documents rather than an assumption by contract type.",
+      });
+    }
+    const lowRate = dus.filter((d) => (rateNum(d) ?? 99) < 4);
+    if (lowRate.length) {
+      checks.push({
+        level: "medium",
+        title: `${lowRate.length} captive generation rates are below ₱4.00/kWh`,
+        detail: `${lowRate.map((d) => `${d.acronym} ${fmtRate(d)}`).join(", ")}. Below the spot price, so the calculator shows retail choice as more expensive there. Confirm these are full generation charges and not a single component.`,
+      });
+    }
+    const lowSpot = dus.filter((d) => d.wesm_data?.latest_rate && d.wesm_data.latest_rate < 2.5);
+    if (lowSpot.length) {
+      checks.push({
+        level: "medium",
+        title: `${lowSpot.length} utilities show a WESM purchase rate below ₱2.50/kWh`,
+        detail: `${lowSpot.map((d) => `${d.acronym} ₱${d.wesm_data.latest_rate.toFixed(2)}`).join(", ")}. Far under the regional GWAP; may be a net-of-adjustments or partial-month figure.`,
+      });
+    }
+    const ext = dus.filter((d) => d.switching_penetration_pct === 0 || d.switching_penetration_pct === 100);
+    if (ext.length) {
+      checks.push({
+        level: "low",
+        title: `${ext.length} utilities show exactly 0% or 100% switching`,
+        detail: "Usually means the eligible-customer count is missing rather than truly zero or complete.",
+      });
+    }
+    (window.RMApp?.extraChecks || []).forEach((c) => checks.push(c));
+    return checks;
+  }
 
   // Grid Emission Factor for GEOP Decarbonization (tCO2 / MWh)
   const GRID_EMISSION_FACTOR = 0.7122;
 
-  // Official Proposed 2027–2031 Roadmap (ERC Working Draft, Oct 2026)
+  // ERC Five-Year RCOA Roadmap 2027–2031
   const ROADMAP_PROPOSED = [
     {
       year: "Year 1 (2027)",
@@ -140,6 +312,11 @@
     }
   ];
 
+  function phaseStats(key) {
+    const p = RD.summary?.crem?.phases?.[key];
+    return p ? `${p.eus.toLocaleString()} EUs · ${Number(p.mw).toFixed(1)} MW` : "—";
+  }
+
   // Historical RCOA Phases (2013–2026)
   const ROADMAP_HISTORICAL = [
     {
@@ -148,7 +325,7 @@
       target: "Bulk Industrial & Commercial",
       badge: "done",
       status: "Implemented",
-      stats: "1,437 EUs · 4,131.2 MW",
+      stats: phaseStats("p1_1mw_above"),
       desc: "Inaugural commercial launch of retail open access across interconnected Luzon, Visayas, and Mindanao WESM networks."
     },
     {
@@ -157,7 +334,7 @@
       target: "Large Commercial",
       badge: "done",
       status: "Implemented",
-      stats: "514 EUs · 436.7 MW",
+      stats: phaseStats("p2_750_999kw"),
       desc: "Supreme Court permanent injunction affirmed customer choice as strictly voluntary, with right to remain captive."
     },
     {
@@ -166,7 +343,7 @@
       target: "Medium Commercial",
       badge: "done",
       status: "Implemented",
-      stats: "623 EUs · 480.5 MW",
+      stats: phaseStats("p3_500_749kw"),
       desc: "Expanded customer choice to cold storage logistics, shopping malls, and secondary medical centers."
     },
     {
@@ -175,7 +352,7 @@
       target: "Small Commercial & Enterprise",
       badge: "active",
       status: "Active (100 kW Unified)",
-      stats: "118 CREM + 985 GEOP · 335.9 MW",
+      stats: phaseStats("p4_100_499kw"),
       desc: "Standardized under ERC Res. 22 (S. 2025). Enables branch banks, boutique hotels, and restaurants to contract retail power."
     }
   ];
@@ -198,6 +375,11 @@
     el.searchDropdown = document.getElementById("searchDropdown");
     el.resetBtn = document.getElementById("resetBtn");
     el.centerMapBtn = document.getElementById("centerMapBtn");
+    el.calcKwhLabel = document.getElementById("calcKwhLabel");
+    el.calcRateNote = document.getElementById("calcRateNote");
+    el.calcLfWarning = document.getElementById("calcLfWarning");
+    el.calcMonthlyLabel = document.getElementById("calcMonthlyLabel");
+    el.calcAnnualLabel = document.getElementById("calcAnnualLabel");
     el.openPricesBtn = document.getElementById("openPricesBtn");
     el.openCompareBtn = document.getElementById("openCompareBtn");
     el.openRoadmapBtn = document.getElementById("openRoadmapBtn");
@@ -319,6 +501,8 @@
     renderSuppliers();
     renderFaq();
     renderRoadmap();
+    applyDynamicCounts();
+    setTimeout(() => document.dispatchEvent(new CustomEvent("rm:ready")), 0);
 
     // Select initial benchmark: MERALCO
     const dus = window.RETAIL_MARKET_DATA?.dus || [];
@@ -337,7 +521,7 @@
     const modeParam = urlParams.get("mode");
     if (modeParam && ["crem", "geop", "rap", "wesm"].includes(modeParam)) {
       state.calcMode = modeParam;
-      document.querySelectorAll(".calc-mode-pill").forEach((p) => {
+      document.querySelectorAll(".calc-mode-pill[data-mode]").forEach((p) => {
         if (p.getAttribute("data-mode") === modeParam) p.classList.add("active");
         else p.classList.remove("active");
       });
@@ -418,6 +602,43 @@
   /**
    * Switch Active View (Map, Directory, Calculator, Suppliers, FAQ)
    */
+  function applyDynamicCounts() {
+    const dus = RD.dus || [];
+    const facts = document.getElementById("deskFacts");
+    if (facts) {
+      const S = RD.summary || {};
+      const row = (k, v) => `<div><dt>${k}</dt><dd>${v}</dd></div>`;
+      facts.innerHTML =
+        row("Retail customers", `${Number(S.crem?.total_eus || 0).toLocaleString()}<small> end-users</small>`) +
+        row("Retail demand", `${Math.round(S.crem?.total_mw || 0).toLocaleString()}<small> MW</small>`) +
+        row("Average retail price", `₱${MARKET_WAP.crem.toFixed(2)}<small>/kWh</small>`) +
+        row("Data as of", escapeHtml(REPORT_LABEL));
+    }
+    const nDu = dus.filter(isDistributionUtility).length;
+    const nGrid = dus.length - nDu;
+    const label = `${nDu} DUs${nGrid ? ` + ${nGrid} NGCP` : ""}`;
+    if (el.searchInput) el.searchInput.placeholder = "Search utilities or provinces";
+    const dirTitle = document.querySelector("#viewDirectory .view-title");
+    if (dirTitle) dirTitle.textContent = "On-Grid Utilities Directory";
+    const pills = { res: (RD.res_suppliers_expanded || []).length, geop: (RD.geop_suppliers_expanded || []).length, rap: (RD.rap_aggregators_expanded || []).length };
+    const names = { res: "RES Suppliers", geop: "GEOP Green", rap: "Aggregators" };
+    document.querySelectorAll(".calc-mode-pill[data-stype]").forEach((p) => {
+      const t = p.getAttribute("data-stype");
+      p.textContent = `${names[t]} (${pills[t]})`;
+    });
+    const faqTotal = window.RCOA_FAQ_DATA?.faqs?.length;
+    if (faqTotal) {
+      const allChip = document.querySelector('.faq-chip[data-q=""]');
+      if (allChip) allChip.textContent = `All (${faqTotal})`;
+    }
+    const nChecks = runDataChecks().filter((c) => c.level === "high").length;
+    const pill = document.getElementById("brandPill");
+    if (pill && nChecks) {
+      pill.insertAdjacentHTML("beforeend", `<span class="brand-badge" aria-label="${nChecks} data issues">${nChecks}</span>`);
+      pill.title = `About this app & data checks (${nChecks} high-priority)`;
+    }
+  }
+
   function switchView(viewId) {
     state.currentView = viewId;
 
@@ -439,6 +660,7 @@
     if (viewId === "viewMap") {
       setTimeout(() => state.map?.invalidateSize(), 50);
     }
+    document.dispatchEvent(new CustomEvent("rm:view", { detail: viewId }));
   }
 
   /**
@@ -513,43 +735,42 @@
       return true;
     });
 
+    const maxMw = {};
+    ["crem", "geop", "rap"].forEach((k) => {
+      maxMw[k] = Math.max(...dus.map((d) => Number(d[`${k}_mw`]) || 0));
+    });
+
     filtered.forEach((du) => {
       const lat = du.lat;
       const lon = du.lon ?? du.lng;
       if (typeof lat !== "number" || typeof lon !== "number") return;
 
       const isSelected = state.selectedDu && state.selectedDu.id === du.id;
-      const hasCrem = (du.crem_eus || 0) > 0;
-      const hasGeop = (du.geop_eus || 0) > 0;
-      const hasRap = (du.rap_groups || 0) > 0;
 
-      let dotClass = "crem";
-      if (hasCrem && hasGeop) dotClass = "crem-geop";
-      else if (!hasCrem && hasGeop) dotClass = "geop";
-      if (hasRap) dotClass += " rap-ring";
-      if (isSelected) dotClass += " active";
-
-      const showCallout = isSelected;
-      const isLandmark = LANDMARKS.has(du.acronym);
+      // Proportional symbol: circle area scales with the MW of the program in view
+      const prog = state.programFilter === "all" ? "crem" : state.programFilter;
+      const mw = Number(du[`${prog}_mw`]) || 0;
+      const size = Math.round(6 + 28 * Math.sqrt(mw / (maxMw[prog] || 1)));
+      const cls = `${prog}${isSelected ? " active" : ""}${isDistributionUtility(du) ? "" : " grid-node"}`;
 
       const html = `
-        <div class="clean-marker">
-          ${showCallout ? `<div class="marker-callout-pill">${escapeHtml(du.acronym)} · ${(du.crem_eus || 0).toLocaleString()} EUs</div>` : ""}
-          <div class="marker-dot ${dotClass}"></div>
-          ${!showCallout && isLandmark ? `<div class="landmark-tag">${escapeHtml(du.acronym)}</div>` : ""}
+        <div class="clean-marker" style="width:${size}px;height:${size}px;">
+          ${isSelected ? `<div class="marker-callout-pill" style="bottom:${size / 2 + 8}px">${escapeHtml(du.acronym)} <span>${mw.toLocaleString(undefined, { maximumFractionDigits: 1 })} MW</span></div>` : ""}
+          <div class="marker-dot ${cls}" style="width:${size}px;height:${size}px;"></div>
         </div>
       `;
 
       const icon = L.divIcon({
         className: "custom-div-icon",
         html: html,
-        iconSize: [18, 18],
-        iconAnchor: [9, 9],
+        iconSize: [size, size],
+        iconAnchor: [size / 2, size / 2],
       });
 
       const marker = L.marker([lat, lon], {
         icon: icon,
-        zIndexOffset: isSelected ? 1000 : 10,
+        zIndexOffset: isSelected ? 2000 : 1000 - size * 10,
+        keyboard: false,
       });
 
       marker.on("click", (e) => {
@@ -576,7 +797,8 @@
       return true;
     });
 
-    const totalDus = activeList.length;
+    const totalDus = activeList.filter(isDistributionUtility).length;
+    const ngcpCount = activeList.length - totalDus;
     let cremEus = 0;
     let cremMw = 0;
     let geopEus = 0;
@@ -589,9 +811,9 @@
       rapGroups += d.rap_groups || 0;
     });
 
-    const prefix = state.gridFilter === "all" ? "⚡" : `⚡ ${state.gridFilter}:`;
-    if (el.ribbonDUs) el.ribbonDUs.textContent = `${prefix} ${totalDus} On-Grid DUs`;
-    if (el.ribbonCREM) el.ribbonCREM.textContent = `${cremEus.toLocaleString()} CREM EUs (${cremMw.toFixed(0)} MW)`;
+    const prefix = state.gridFilter === "all" ? "" : `${state.gridFilter}:`;
+    if (el.ribbonDUs) el.ribbonDUs.textContent = `${prefix} ${totalDus} DUs${ngcpCount ? ` + ${ngcpCount} NGCP` : ""}`;
+    if (el.ribbonCREM) el.ribbonCREM.textContent = `${cremEus.toLocaleString()} CREM EUs (${Math.round(cremMw).toLocaleString()} MW)`;
     if (el.ribbonGEOP) el.ribbonGEOP.textContent = `${geopEus.toLocaleString()} GEOP EUs`;
     if (el.ribbonRAP) el.ribbonRAP.textContent = `${rapGroups} RAP Grps`;
   }
@@ -602,6 +824,7 @@
   function selectDu(du, flyTo = true) {
     if (!du) return;
     state.selectedDu = du;
+    document.dispatchEvent(new CustomEvent("rm:select", { detail: du }));
 
     renderMarkers();
 
@@ -622,16 +845,18 @@
     if (el.cardRapMw) el.cardRapMw.textContent = `${(du.rap_mw || 0).toFixed(1)} MW`;
 
     // Populate Sub-strip (Verified URR Base Rate, WESM Spot Rate, Switching Penetration)
-    const formattedRate = du.base_rate ? (du.base_rate.startsWith("₱") ? du.base_rate : `₱${du.base_rate}`) : "₱7.3300";
-    if (el.cardBaseRate) el.cardBaseRate.textContent = `${formattedRate}/kWh`;
+    const formattedRate = fmtRate(du);
+    if (el.cardBaseRate) el.cardBaseRate.innerHTML = `${formattedRate}/kWh${staleTag(du)}`;
     if (el.cardWesmRate) {
-      const wRate = du.wesm_data?.latest_rate || 5.4513;
+      const wRate = duSpotRate(du);
       el.cardWesmRate.textContent = `₱${wRate.toFixed(4)}`;
-      el.cardWesmRate.title = `WESM Spot: ₱${wRate.toFixed(4)}/kWh (${du.wesm_data?.genmix_pct || 15}% captive mix)`;
+      el.cardWesmRate.title = du.wesm_data?.latest_rate
+        ? `WESM Spot: ₱${wRate.toFixed(4)}/kWh (${du.wesm_data.genmix_pct}% of supply mix)`
+        : `No DU-specific spot data; showing ${du.grid} regional GWAP`;
     }
     if (el.bmDuRate) el.bmDuRate.textContent = `${formattedRate}`;
     if (el.bmDuSub) {
-      el.bmDuSub.textContent = du.urr_month ? `📅 ${du.urr_month} URR filing` : "Regulated URR captive tariff";
+      el.bmDuSub.innerHTML = `${escapeHtml(fmtMonth(du.urr_month))} URR${staleTag(du)}`;
     }
     if (el.bmCremRate) el.bmCremRate.textContent = `₱${MARKET_WAP.crem.toFixed(4)}`;
     if (el.bmGeopRate) el.bmGeopRate.textContent = `₱${MARKET_WAP.geop.toFixed(4)}`;
@@ -640,7 +865,7 @@
         el.bmWesmRate.textContent = `₱${du.wesm_data.latest_rate.toFixed(4)}`;
         if (el.bmWesmSub) el.bmWesmSub.textContent = `${du.wesm_data.genmix_pct}% gen mix`;
       } else {
-        const regGwap = du.grid === "Visayas" ? 4.9967 : du.grid === "Mindanao" ? 3.9837 : 4.3140;
+        const regGwap = regionalGwap(du.grid);
         el.bmWesmRate.textContent = `₱${regGwap.toFixed(4)}`;
         if (el.bmWesmSub) el.bmWesmSub.textContent = `${du.grid} Spot GWAP`;
       }
@@ -661,14 +886,14 @@
           .map(
             (s) => `
             <div class="supplier-pill">
-              <span style="font-weight:700; color:#0f172a;">${escapeHtml(s.name)}</span>
-              <span style="color:#2563eb; font-weight:700;">${escapeHtml(s.share || s.role || "Active")}</span>
+              <span style="font-weight:700; color:#14213d;">${escapeHtml(s.name)}</span>
+              <span style="color:#2d5bd7; font-weight:700;">${escapeHtml(s.share || s.role || "Active")}</span>
             </div>
           `
           )
           .join("");
       } else {
-        el.cardSuppliersList.innerHTML = `<div style="font-size:9.5px; color:#94a3b8; padding:3px;">Supplied via standard contestable retail contracts</div>`;
+        el.cardSuppliersList.innerHTML = `<div style="font-size:10.5px; color:#97a1b3; padding:3px;">Supplied via standard contestable retail contracts</div>`;
       }
     }
 
@@ -700,10 +925,10 @@
     // Populate Drawer: Phase V Pipeline
     if (el.cardPipelineCard) {
       el.cardPipelineCard.innerHTML = `
-        <div style="font-weight:700; color:#92400e; font-size:10px;">
-          ⚡ ${(du.captive_p5_eus || 0).toLocaleString()} EUs (${(du.captive_p5_mw || 0).toFixed(1)} MW) · 50–99 kW Wave
+        <div style="font-weight:700; color:#87520b; font-size:10px;">
+          ${(du.captive_p5_eus || 0).toLocaleString()} EUs (${(du.captive_p5_mw || 0).toFixed(1)} MW) · 50–99 kW Wave
         </div>
-        <div style="font-size:9px; color:#78350f; margin-top:2px;">
+        <div style="font-size:10px; color:#6e430a; margin-top:2px;">
           Proposed Year 1 (2027) milestone · Synchronized with PSA expirations.
         </div>
       `;
@@ -742,12 +967,12 @@
 
     if (psas.length === 0) {
       el.cardPsaSummary.innerHTML = `
-        <div style="font-size:10px; font-weight:700; color:#1e293b; margin-bottom:2px;">Special Procuring Entity / Industrial Zone</div>
-        <div style="font-size:9px; color:#64748b; line-height:1.35;">
+        <div style="font-size:10px; font-weight:700; color:#1f2d48; margin-bottom:2px;">Special Procuring Entity / Industrial Zone</div>
+        <div style="font-size:10px; color:#66728a; line-height:1.35;">
           No captive bilateral PSAs on file. Energy is procured directly through PEZA industrial zone tariffs or WESM spot purchases without captive stranded capacity covenants.
         </div>
       `;
-      el.cardPsasList.innerHTML = `<div style="font-size:9.5px; color:#94a3b8; text-align:center; padding:15px;">No bilateral PSAs registered</div>`;
+      el.cardPsasList.innerHTML = `<div style="font-size:10.5px; color:#97a1b3; text-align:center; padding:15px;">No bilateral PSAs registered</div>`;
       return;
     }
 
@@ -767,19 +992,19 @@
         </div>
         <div class="psa-summary-stat">
           <div class="pstat-lbl">Bilateral MW</div>
-          <div class="pstat-val">${summary.total_contracted_mw.toLocaleString()} <span style="font-size:7px; font-weight:600;">MW</span></div>
+          <div class="pstat-val">${summary.total_contracted_mw.toLocaleString()} <span style="font-size:9px; font-weight:600;">MW</span></div>
         </div>
         <div class="psa-summary-stat">
           <div class="pstat-lbl">Captive Base</div>
-          <div class="pstat-val" style="color:#2563eb;">${du.base_rate ? (du.base_rate.startsWith("₱") ? du.base_rate : `₱${du.base_rate}`) : "₱7.3300"}</div>
+          <div class="pstat-val" style="color:#2d5bd7;">${du.base_rate ? (du.base_rate.startsWith("₱") ? du.base_rate : `₱${du.base_rate}`) : "₱7.3300"}</div>
         </div>
         <div class="psa-summary-stat">
-          <div class="pstat-lbl" style="color:#7c3aed;">URR WESM Spot</div>
-          <div class="pstat-val" style="color:#7c3aed;" title="${wesmMix}% captive generation mix">₱${wesmRateVal.toFixed(4)}</div>
+          <div class="pstat-lbl" style="color:#6b46c1;">URR WESM Spot</div>
+          <div class="pstat-val" style="color:#6b46c1;" title="${wesmMix}% captive generation mix">₱${wesmRateVal.toFixed(4)}</div>
         </div>
         <div class="psa-summary-stat">
           <div class="pstat-lbl">Filing Month</div>
-          <div class="pstat-val" style="font-size:8.5px; color:#059669; font-weight:800;" title="${escapeHtml(urrMonthLabel)}">📅 ${escapeHtml(urrMonthLabel)}</div>
+          <div class="pstat-val" style="font-size:10px; color:#13866b; font-weight:800;" title="${escapeHtml(urrMonthLabel)}">${escapeHtml(urrMonthLabel)}</div>
         </div>
       </div>
       <div class="psa-progress-wrap">
@@ -788,9 +1013,9 @@
           <div class="psa-progress-segment locked" style="width: ${100 - carvePct}%;"></div>
         </div>
         <div class="psa-progress-legend">
-          <span class="psa-legend-item carved">🟢 Carve-Out: ${summary.carved_out_mw.toFixed(1)} MW (${carvePct}%)</span>
-          <span class="psa-legend-item" style="color:#7c3aed;">⚡ Spot Mix: ${wesmMix}% (${wesmGwh} GWh)</span>
-          <span class="psa-legend-item locked">🔴 Locked: ${summary.locked_mw.toFixed(1)} MW</span>
+          <span class="psa-legend-item carved">Carve-Out: ${summary.carved_out_mw.toFixed(1)} MW (${carvePct}%)</span>
+          <span class="psa-legend-item" style="color:#6b46c1;">Spot Mix: ${wesmMix}% (${wesmGwh} GWh)</span>
+          <span class="psa-legend-item locked">Locked: ${summary.locked_mw.toFixed(1)} MW</span>
         </div>
       </div>
     `;
@@ -798,41 +1023,41 @@
     const wesmCardHtml = `
       <div class="psa-card psa-wesm">
         <div class="psa-header-row">
-          <div class="psa-supplier-title" style="color:#6b21a8;">WHOLESALE ELECTRICITY SPOT MARKET (WESM)</div>
-          <span class="psa-tech-badge tech-wesm">⚡ SPOT PROCUREMENT</span>
+          <div class="psa-supplier-title" style="color:#53359e;">WHOLESALE ELECTRICITY SPOT MARKET (WESM)</div>
+          <span class="psa-tech-badge tech-wesm">SPOT PROCUREMENT</span>
         </div>
 
-        <div class="psa-metrics-row" style="background:#faf5ff; border-color:#e9d5ff;">
+        <div class="psa-metrics-row" style="background:#f6f3fc; border-color:#ddd3f3;">
           <div class="psa-metric">
-            <span class="psa-lbl" style="color:#7c3aed;">Spot Generation Mix</span>
-            <span class="psa-val" style="color:#6b21a8;">${wesmMix}% <span class="psa-sub">captive</span></span>
+            <span class="psa-lbl" style="color:#6b46c1;">Spot Generation Mix</span>
+            <span class="psa-val" style="color:#53359e;">${wesmMix}% <span class="psa-sub">captive</span></span>
           </div>
           <div class="psa-metric highlight">
-            <span class="psa-lbl" style="color:#7c3aed;">Latest URR Spot Rate</span>
-            <span class="psa-val" style="color:#7c3aed;">₱${wesmRateVal.toFixed(4)}<span class="psa-sub">/kWh</span></span>
+            <span class="psa-lbl" style="color:#6b46c1;">Latest URR Spot Rate</span>
+            <span class="psa-val" style="color:#6b46c1;">₱${wesmRateVal.toFixed(4)}<span class="psa-sub">/kWh</span></span>
           </div>
           <div class="psa-metric">
-            <span class="psa-lbl" style="color:#7c3aed;">URR Filing Month</span>
-            <span class="psa-val" style="color:#059669; font-size:8.5px; font-weight:700;">📅 ${escapeHtml(urrMonthLabel)}</span>
+            <span class="psa-lbl" style="color:#6b46c1;">URR Filing Month</span>
+            <span class="psa-val" style="color:#13866b; font-size:10px; font-weight:700;">${escapeHtml(urrMonthLabel)}</span>
           </div>
         </div>
 
         <div class="psa-details-grid">
           <div class="psa-detail-item">
             <span class="psa-lbl">Market Settlement</span>
-            <span class="psa-val-txt"><code class="docket-code" style="color:#7c3aed; background:#f5f3ff; border-color:#ddd6fe;">🏛️ IEMOP Gross Pool Market Clearing</code></span>
+            <span class="psa-val-txt"><code class="docket-code" style="color:#6b46c1; background:#f3effb; border-color:#d7ccf2;">IEMOP Gross Pool Market Clearing</code></span>
           </div>
           <div class="psa-detail-item">
             <span class="psa-lbl">Annual Volume &amp; Spend</span>
-            <span class="psa-val-txt">⚡ ${wesmGwh} GWh / yr (₱${wesmCostB}B)</span>
+            <span class="psa-val-txt">${wesmGwh} GWh / yr (₱${wesmCostB}B)</span>
           </div>
         </div>
 
-        <div class="psa-carveout-box" style="background:#f5f3ff; border:1px solid #ddd6fe;">
-          <div class="psa-status-badge" style="color:#7c3aed; font-weight:800;">
-            ⚡ Variable Spot Exposure (Hourly Net Settlement)
+        <div class="psa-carveout-box" style="background:#f3effb; border:1px solid #d7ccf2;">
+          <div class="psa-status-badge" style="color:#6b46c1; font-weight:800;">
+            Variable Spot Exposure (Hourly Net Settlement)
           </div>
-          <div class="psa-carveout-text" style="color:#5b21b6;">Procured on wholesale spot market to balance captive customer load without locked Take-or-Pay penalties.</div>
+          <div class="psa-carveout-text" style="color:#53359e;">Procured on wholesale spot market to balance captive customer load without locked Take-or-Pay penalties.</div>
         </div>
       </div>
     `;
@@ -852,7 +1077,7 @@
     }
 
     if (filtered.length === 0 && !includeWesm) {
-      el.cardPsasList.innerHTML = `<div style="text-align:center; padding:15px; font-size:9.5px; color:#94a3b8;">No contracts matching this filter</div>`;
+      el.cardPsasList.innerHTML = `<div style="text-align:center; padding:15px; font-size:10.5px; color:#97a1b3;">No contracts matching this filter</div>`;
       return;
     }
 
@@ -863,7 +1088,7 @@
         const techClass = "tech-" + techClean;
         const effectiveRateVal = (p.urr_rate || p.rate || 0);
         const rateDisplay = effectiveRateVal > 0 ? `₱${effectiveRateVal.toFixed(4)}/kWh` : "Pending URR";
-        const monthBadge = p.urr_month ? `📅 ${escapeHtml(p.urr_month)}` : "URR Filing";
+        const monthBadge = p.urr_month ? `${escapeHtml(p.urr_month)}` : "URR Filing";
         const docketNum = p.erc_case || p.docket || "ERC Docket Pending";
 
         return `
@@ -884,24 +1109,24 @@
             </div>
             <div class="psa-metric">
               <span class="psa-lbl">URR Month</span>
-              <span class="psa-val" style="color:#059669; font-size:8.5px; font-weight:700;">${monthBadge}</span>
+              <span class="psa-val" style="color:#13866b; font-size:10px; font-weight:700;">${monthBadge}</span>
             </div>
           </div>
 
           <div class="psa-details-grid">
             <div class="psa-detail-item">
               <span class="psa-lbl">Verified ERC Case No.</span>
-              <span class="psa-val-txt"><code class="docket-code">⚖️ ${escapeHtml(docketNum)}</code></span>
+              <span class="psa-val-txt"><code class="docket-code">${escapeHtml(docketNum)}</code></span>
             </div>
             <div class="psa-detail-item">
               <span class="psa-lbl">Tenor &amp; Expiration</span>
-              <span class="psa-val-txt">⏳ ${escapeHtml(p.tenor)}</span>
+              <span class="psa-val-txt">${escapeHtml(p.tenor)}</span>
             </div>
           </div>
 
           <div class="psa-carveout-box ${isCarved ? "carved" : "locked"}">
             <div class="psa-status-badge">
-              ${isCarved ? "🟢 " + escapeHtml(p.carveout_status) : "🔴 " + escapeHtml(p.carveout_status)}
+              ${isCarved ? "" + escapeHtml(p.carveout_status) : "" + escapeHtml(p.carveout_status)}
             </div>
             <div class="psa-carveout-text">${isCarved ? "Pro-rata capacity reduction active · No stranded fee on captive pool" : "Fixed capacity fees retained · No contestability reduction clause"}</div>
           </div>
@@ -961,7 +1186,7 @@
       .slice(0, 6);
 
     if (matches.length === 0) {
-      el.searchDropdown.innerHTML = `<div style="padding:8px 12px; font-size:11px; color:#94a3b8; text-align:center;">No matching DUs found</div>`;
+      el.searchDropdown.innerHTML = `<div style="padding:8px 12px; font-size:11px; color:#97a1b3; text-align:center;">No matching DUs found</div>`;
       el.searchDropdown.classList.add("active");
       return;
     }
@@ -1100,11 +1325,13 @@
     });
 
     if (el.dirCountBadge) {
-      el.dirCountBadge.textContent = `${list.length} DU${list.length === 1 ? "" : "s"}`;
+      const nDu = list.filter(isDistributionUtility).length;
+      const nGrid = list.length - nDu;
+      el.dirCountBadge.textContent = `${nDu} DU${nDu === 1 ? "" : "s"}${nGrid ? ` + ${nGrid} NGCP` : ""}`;
     }
 
     if (list.length === 0) {
-      el.dirListContainer.innerHTML = `<div style="text-align:center; padding:30px; font-size:11px; color:#94a3b8;">No matching utilities found</div>`;
+      el.dirListContainer.innerHTML = `<div style="text-align:center; padding:30px; font-size:11px; color:#97a1b3;">No matching utilities found</div>`;
       return;
     }
 
@@ -1120,8 +1347,8 @@
           metricVal = `${du.rap_groups || 0} Groups`;
           metricSub = `${(du.rap_mw || 0).toFixed(1)} MW Agg`;
         } else if (state.dirSortBy === "base_rate") {
-          metricVal = du.base_rate || "₱7.3300";
-          metricSub = du.urr_month ? `${du.urr_month} URR` : "URR Captive Rate";
+          metricVal = fmtRate(du);
+          metricSub = `${escapeHtml(fmtMonth(du.urr_month))} URR`;
         } else if (state.dirSortBy === "wesm_rate") {
           metricVal = `₱${(du.wesm_data?.latest_rate || 0).toFixed(4)}/kWh`;
           metricSub = `${du.wesm_data?.genmix_pct || 0}% Spot Gen Mix`;
@@ -1136,13 +1363,13 @@
 
         const psaSummary = du.psa_summary || {};
         const psaBadge = (psaSummary.total_contracts > 0 && state.dirSortBy !== "psas")
-          ? `<span class="badge-tag" style="background:#f1f5f9; color:#475569;">📜 ${psaSummary.total_contracts} PSAs</span>`
+          ? `<span class="badge-tag" style="background:#edf1f5; color:#4a5770;">${psaSummary.total_contracts} PSAs</span>`
           : "";
-        const urrMonthBadge = du.urr_month
-          ? `<span class="badge-tag" style="background:#eff6ff; color:#1d4ed8; font-weight:700;">📅 ${escapeHtml(du.urr_month)}</span>`
-          : "";
+        const urrMonthBadge = isStaleRate(du)
+          ? `<span class="badge-tag stale" title="Captive rate more than ${STALE_MONTHS} months older than the ${REPORT_LABEL} market data">${escapeHtml(fmtMonth(du.urr_month))} · old</span>`
+          : `<span class="badge-tag" style="background:#eef3fd; color:#2449b5; font-weight:700;">${escapeHtml(fmtMonth(du.urr_month))}</span>`;
         const wesmBadge = state.dirSortBy !== "wesm_rate" && du.wesm_data?.latest_rate
-          ? `<span class="badge-tag wesm" style="background:#f5f3ff; color:#7c3aed; font-weight:700;">⚡ WESM ₱${du.wesm_data.latest_rate.toFixed(2)}</span>`
+          ? `<span class="badge-tag wesm" style="background:#f3effb; color:#6b46c1; font-weight:700;">WESM ₱${du.wesm_data.latest_rate.toFixed(2)}</span>`
           : "";
 
         return `
@@ -1189,8 +1416,7 @@
     if (el.calcDuSelect) {
       el.calcDuSelect.innerHTML = dus
         .map((d) => {
-          const rate = d.base_rate || "₱7.3300";
-          return `<option value="${d.id}" ${d.acronym === "MERALCO" ? "selected" : ""}>${escapeHtml(d.acronym)} — ${escapeHtml(d.province)} (${rate}/kWh)</option>`;
+          return `<option value="${d.id}" ${d.acronym === "MERALCO" ? "selected" : ""}>${escapeHtml(d.acronym)} — ${escapeHtml(d.province)} (${fmtRate(d)}/kWh · ${escapeHtml(fmtMonth(d.urr_month))}${isStaleRate(d) ? ", old" : ""})</option>`;
         })
         .join("");
     }
@@ -1217,9 +1443,11 @@
   function updateCalculatorModeUI() {
     const mode = state.calcMode;
     const rdata = window.RETAIL_MARKET_DATA || {};
+    if (el.calcKwhLabel) el.calcKwhLabel.textContent = "Monthly Energy Consumption (kWh / month)";
+    syncSuggestedKwh();
 
     if (mode === "crem") {
-      if (el.calcModeTitle) el.calcModeTitle.textContent = "🔵 Individual Retail Open Access (CREM)";
+      if (el.calcModeTitle) el.calcModeTitle.textContent = "Individual Retail Open Access (CREM)";
       if (el.calcThresholdBadge) el.calcThresholdBadge.textContent = "Threshold: 100 kW";
       if (el.calcSingleDemandWrap) el.calcSingleDemandWrap.style.display = "flex";
       if (el.calcRapDemandWrap) el.calcRapDemandWrap.style.display = "none";
@@ -1238,7 +1466,7 @@
         `;
       }
     } else if (mode === "geop") {
-      if (el.calcModeTitle) el.calcModeTitle.textContent = "🟢 Green Energy Option Program (GEOP)";
+      if (el.calcModeTitle) el.calcModeTitle.textContent = "Green Energy Option Program (GEOP)";
       if (el.calcThresholdBadge) el.calcThresholdBadge.textContent = "100% RE · 100 kW Threshold";
       if (el.calcSingleDemandWrap) el.calcSingleDemandWrap.style.display = "flex";
       if (el.calcRapDemandWrap) el.calcRapDemandWrap.style.display = "none";
@@ -1257,7 +1485,8 @@
         `;
       }
     } else if (mode === "rap") {
-      if (el.calcModeTitle) el.calcModeTitle.textContent = "🟠 Retail Aggregation Program (RAP Calculator)";
+      if (el.calcModeTitle) el.calcModeTitle.textContent = "Retail Aggregation Program (RAP Calculator)";
+      if (el.calcKwhLabel) el.calcKwhLabel.textContent = "Whole Group Monthly Consumption (kWh / month)";
       if (el.calcThresholdBadge) el.calcThresholdBadge.textContent = "Pooled Meters (<100 kW each)";
       if (el.calcSingleDemandWrap) el.calcSingleDemandWrap.style.display = "none";
       if (el.calcRapDemandWrap) el.calcRapDemandWrap.style.display = "flex";
@@ -1276,8 +1505,8 @@
         `;
       }
     } else if (mode === "wesm") {
-      if (el.calcModeTitle) el.calcModeTitle.textContent = "⚡ Wholesale Spot Market (WESM Passthrough)";
-      if (el.calcThresholdBadge) el.calcThresholdBadge.textContent = "Wholesale True-Up Benchmark";
+      if (el.calcModeTitle) el.calcModeTitle.textContent = "WESM Spot Price (Reference Only)";
+      if (el.calcThresholdBadge) el.calcThresholdBadge.textContent = "Benchmark, not a supply option";
       if (el.calcSingleDemandWrap) el.calcSingleDemandWrap.style.display = "flex";
       if (el.calcRapDemandWrap) el.calcRapDemandWrap.style.display = "none";
       if (el.calcSupplierLabel) el.calcSupplierLabel.textContent = "Select WESM Spot Clearing Reference";
@@ -1294,11 +1523,9 @@
 
       if (el.calcSupplierSelect) {
         el.calcSupplierSelect.innerHTML = `
-          <option value="wap" selected>National Spot GWAP — ₱${(spotData.national_gwap || 4.4038).toFixed(4)}/kWh</option>
+          <option value="wap" selected>National Spot GWAP — ${peso(MARKET_WAP.wesm)}/kWh</option>
           ${duSpotOpt}
-          <option value="${spotData.luzon_gwap || 4.3140}">₱${(spotData.luzon_gwap || 4.3140).toFixed(4)}/kWh — Luzon Grid Spot GWAP</option>
-          <option value="${spotData.visayas_gwap || 4.9967}">₱${(spotData.visayas_gwap || 4.9967).toFixed(4)}/kWh — Visayas Grid Spot GWAP</option>
-          <option value="${spotData.mindanao_gwap || 3.9837}">₱${(spotData.mindanao_gwap || 3.9837).toFixed(4)}/kWh — Mindanao Grid Spot GWAP (Hydro)</option>
+          ${["Luzon", "Visayas", "Mindanao"].filter((g) => REGIONAL_GWAP[g]).map((g) => `<option value="${REGIONAL_GWAP[g]}">${peso(REGIONAL_GWAP[g])}/kWh — ${g} Grid Spot GWAP</option>`).join("")}
         `;
       }
     }
@@ -1307,19 +1534,34 @@
   }
 
   /**
+   * Keep the kWh box consistent with the demand inputs until the user types their own figure.
+   */
+  function syncSuggestedKwh() {
+    if (state.kwhTouched) return;
+    const kw = state.calcMode === "rap"
+      ? (parseInt(state.calcRapMembers, 10) || 10) * (parseFloat(state.calcRapKwPerMember) || 15)
+      : parseFloat(state.calcKw) || 150;
+    state.calcKwh = Math.round((kw * HOURS_PER_MONTH * DEFAULT_LOAD_FACTOR) / 100) * 100;
+    if (el.calcKwhInput) el.calcKwhInput.value = state.calcKwh;
+  }
+
+  /**
    * Real-Time Multi-Program Savings & Qualification Calculation
    */
   function recalcSavings() {
+    recalcSavingsCore();
+    document.dispatchEvent(new CustomEvent("rm:calc"));
+  }
+
+  function recalcSavingsCore() {
     const mode = state.calcMode;
     const dus = window.RETAIL_MARKET_DATA?.dus || [];
     const du = dus.find((d) => d.id === state.calcDuId) || dus[0];
 
-    // Extract DU Base Rate from verified URR
-    let duBaseRate = 7.3300;
-    if (du && du.base_rate) {
-      const match = du.base_rate.match(/[\d.]+/);
-      if (match) duBaseRate = parseFloat(match[0]);
-    }
+    // DU captive generation rate (URR); no silent fallback to another utility's rate
+    const duBaseRate = rateNum(du) ?? MARKET_WAP.crem;
+    const rateNote = `Compares generation charges only: ${escapeHtml(du?.acronym || "DU")} captive rate ${fmtRate(du)}/kWh (${escapeHtml(fmtMonth(du?.urr_month))}) vs. the selected ${mode === "wesm" ? "spot price" : "offer"}. Distribution, transmission, system loss, taxes and other DU charges still apply either way.${isStaleRate(du) ? ` <b class="stale-text">This captive rate is more than ${STALE_MONTHS} months older than the ${REPORT_LABEL} market prices, so the gap may be overstated or understated.</b>` : ""}`;
+    if (el.calcRateNote) el.calcRateNote.innerHTML = rateNote;
 
     // Determine Chosen Supplier Rate
     let chosenSupplierRate = MARKET_WAP[mode];
@@ -1330,7 +1572,7 @@
       }
     }
 
-    const kwh = parseFloat(state.calcKwh) || 65000;
+    const kwh = parseFloat(state.calcKwh) || 0;
 
     if (mode === "crem" || mode === "geop" || mode === "wesm") {
       const kw = parseFloat(state.calcKw) || 150;
@@ -1340,15 +1582,15 @@
       let isUpcoming = kw >= 50 && kw < 100;
       let verdictTitle = "";
       let verdictSub = "";
-      let icon = "✅";
+      let icon = "✓";
       let bannerClass = "verdict-banner";
 
       if (mode === "wesm") {
-        icon = "⚡";
-        verdictTitle = "Wholesale Spot Arbitrage (WESM)";
+        icon = "≈";
+        verdictTitle = "WESM Spot Benchmark (reference only)";
         const spread = duBaseRate - chosenSupplierRate;
         if (spread > 0) {
-          verdictSub = `Spot clearing is ₱${spread.toFixed(4)}/kWh below ${du?.acronym} captive tariff. Subject to hourly volatility.`;
+          verdictSub = `Spot clears ₱${spread.toFixed(4)}/kWh below the ${du?.acronym} captive rate on average. End-users don't buy at spot directly; a RES spot pass-through offer adds margin and carries hourly price risk.`;
         } else {
           verdictSub = `Spot rate exceeds ${du?.acronym} captive base rate by ₱${Math.abs(spread).toFixed(4)}/kWh. Fixed RSC hedge recommended.`;
           bannerClass += " upcoming";
@@ -1368,12 +1610,12 @@
       } else if (kw >= 50) {
         verdictTitle = "Proposed Wave (50–99 kW)";
         verdictSub = "Roadmap Year 1 (2027) · Eligible to pool now under RAP.";
-        icon = "⏳";
+        icon = "!";
         bannerClass += " upcoming";
       } else {
         verdictTitle = "Captive Consumer (<50 kW)";
         verdictSub = "Regulated tariff · Switch to RAP tab to pool demand.";
-        icon = "📦";
+        icon = "–";
         bannerClass += " captive";
       }
 
@@ -1382,23 +1624,48 @@
       if (el.verdictTitle) el.verdictTitle.textContent = verdictTitle;
       if (el.verdictSub) el.verdictSub.textContent = verdictSub;
 
-      // Savings
+      // Savings (only shown as savings once the customer can actually switch)
       const rateDiff = duBaseRate - chosenSupplierRate;
       const monthlySavings = kwh * rateDiff;
       const annualSavings = monthlySavings * 12;
+      const pctDiff = Math.round((Math.abs(rateDiff) / duBaseRate) * 100);
+      const canSwitch = mode === "wesm" || isEligible;
+      const label = mode === "wesm" ? "Gap vs. spot" : rateDiff >= 0 ? "Savings" : "Extra cost";
 
+      if (el.calcMonthlyLabel) el.calcMonthlyLabel.textContent = canSwitch ? `Estimated Monthly ${label}` : "Monthly Savings";
+      if (el.calcAnnualLabel) el.calcAnnualLabel.textContent = canSwitch ? `Projected Annual ${label}` : "Annual Savings";
       if (el.calcMonthlySavings) {
-        el.calcMonthlySavings.textContent = `${monthlySavings >= 0 ? "₱" : "-₱"}${Math.abs(Math.round(monthlySavings)).toLocaleString()}`;
+        el.calcMonthlySavings.textContent = canSwitch ? (mode === "wesm" ? signedPeso(monthlySavings) : signedPeso(Math.abs(monthlySavings))) : "—";
+        el.calcMonthlySavings.classList.toggle("negative", canSwitch && monthlySavings < 0);
       }
       if (el.calcMonthlySub) {
-        el.calcMonthlySub.textContent = `vs. ${du?.acronym} base rate (₱${duBaseRate.toFixed(4)})`;
+        el.calcMonthlySub.textContent = canSwitch
+          ? `vs. ${du?.acronym} captive rate (₱${duBaseRate.toFixed(4)})`
+          : isUpcoming
+            ? `Not yet eligible · would be ${signedPeso(monthlySavings)}/mo if the 50 kW threshold takes effect`
+            : "Not eligible to switch individually";
       }
       if (el.calcAnnualSavings) {
-        el.calcAnnualSavings.textContent = `${annualSavings >= 0 ? "₱" : "-₱"}${Math.abs(Math.round(annualSavings)).toLocaleString()}`;
+        el.calcAnnualSavings.textContent = canSwitch ? (mode === "wesm" ? signedPeso(annualSavings) : signedPeso(Math.abs(annualSavings))) : "—";
+        el.calcAnnualSavings.classList.toggle("negative", canSwitch && annualSavings < 0);
+        el.calcAnnualSavings.closest(".saving-box")?.classList.toggle("is-cost", canSwitch && annualSavings < 0);
       }
       if (el.calcAnnualSub) {
-        const pctDiff = Math.round((Math.abs(rateDiff) / duBaseRate) * 100);
-        el.calcAnnualSub.textContent = `at ₱${chosenSupplierRate.toFixed(4)}/kWh (${pctDiff}% ${rateDiff >= 0 ? "savings" : "premium"})`;
+        el.calcAnnualSub.textContent = `at ₱${chosenSupplierRate.toFixed(4)}/kWh (${pctDiff}% ${rateDiff >= 0 ? "below" : "above"} captive)`;
+      }
+
+      // Physical sanity check: kWh cannot exceed kW × hours in a month
+      const lf = kw > 0 ? kwh / (kw * HOURS_PER_MONTH) : 0;
+      if (el.calcLfWarning) {
+        if (lf > 1) {
+          el.calcLfWarning.style.display = "block";
+          el.calcLfWarning.innerHTML = `${kwh.toLocaleString()} kWh/month is more than a ${kw} kW load can use running flat-out (${Math.round(kw * HOURS_PER_MONTH).toLocaleString()} kWh). Lower the kWh or raise the peak demand.`;
+        } else if (lf > 0 && lf < 0.1) {
+          el.calcLfWarning.style.display = "block";
+          el.calcLfWarning.innerHTML = `Load factor is only ${(lf * 100).toFixed(0)}%. Check the kWh figure; most commercial loads run at 30–80%.`;
+        } else {
+          el.calcLfWarning.style.display = "none";
+        }
       }
 
       // Extra Card for GEOP or WESM
@@ -1408,14 +1675,14 @@
         const treesEquivalent = Math.round(co2AvoidedTons * 16.5);
         el.calcExtraMetricCard.style.display = "block";
         el.calcExtraMetricCard.className = "extra-metric-card";
-        el.calcExtraMetricCard.style.background = "#f0fdf4";
-        el.calcExtraMetricCard.style.borderColor = "#bbf7d0";
-        el.calcExtraMetricCard.style.color = "#065f46";
+        el.calcExtraMetricCard.style.background = "#eef7f2";
+        el.calcExtraMetricCard.style.borderColor = "#c4e6d8";
+        el.calcExtraMetricCard.style.color = "#0b5a47";
         el.calcExtraMetricCard.innerHTML = `
-          <div style="font-weight:800; font-size:10px; color:#065f46; margin-bottom:4px;">🌱 100% Renewable Impact:</div>
-          <div style="font-size:9.5px; display:flex; gap:8px; flex-wrap:wrap;">
-            <span>🛡️ <strong>${co2AvoidedTons} t CO₂</strong>/yr avoided</span>
-            <span>🌳 <strong>${treesEquivalent.toLocaleString()}</strong> trees planted</span>
+          <div style="font-weight:800; font-size:10px; color:#0b5a47; margin-bottom:4px;">100% Renewable Impact:</div>
+          <div style="font-size:10.5px; display:flex; gap:8px; flex-wrap:wrap;">
+            <span><strong>${co2AvoidedTons} t CO₂</strong>/yr avoided</span>
+            <span><strong>${treesEquivalent.toLocaleString()}</strong> trees planted</span>
           </div>
         `;
       } else if (mode === "wesm" && el.calcExtraMetricCard) {
@@ -1423,14 +1690,14 @@
         const resMargin = (MARKET_WAP.crem - chosenSupplierRate).toFixed(4);
         el.calcExtraMetricCard.style.display = "block";
         el.calcExtraMetricCard.className = "extra-metric-card";
-        el.calcExtraMetricCard.style.background = "#faf5ff";
-        el.calcExtraMetricCard.style.borderColor = "#ddd6fe";
-        el.calcExtraMetricCard.style.color = "#5b21b6";
+        el.calcExtraMetricCard.style.background = "#f6f3fc";
+        el.calcExtraMetricCard.style.borderColor = "#d7ccf2";
+        el.calcExtraMetricCard.style.color = "#53359e";
         el.calcExtraMetricCard.innerHTML = `
-          <div style="font-weight:800; font-size:10px; color:#5b21b6; margin-bottom:4px;">⚡ Wholesale Generation Mix:</div>
-          <div style="font-size:9.5px; display:flex; gap:8px; flex-wrap:wrap;">
-            <span>📊 <strong>${spotMix}%</strong> DU spot mix</span>
-            <span>🛡️ <strong>+₱${resMargin}/kWh</strong> retail hedge</span>
+          <div style="font-weight:800; font-size:10px; color:#53359e; margin-bottom:4px;">Wholesale Generation Mix:</div>
+          <div style="font-size:10.5px; display:flex; gap:8px; flex-wrap:wrap;">
+            <span><strong>${spotMix}%</strong> DU spot mix</span>
+            <span><strong>+₱${resMargin}/kWh</strong> retail hedge</span>
           </div>
         `;
       } else if (el.calcExtraMetricCard) {
@@ -1441,25 +1708,26 @@
       if (el.calcStepsBox) {
         if (mode === "wesm") {
           el.calcStepsBox.innerHTML = `
-            <div style="font-weight:700; margin-bottom:3px; color:#5b21b6; font-size:10px;">⚡ WESM Spot Access:</div>
-            <div style="font-size:9.5px; color:#475569; line-height:1.35;">
+            <div style="font-weight:700; margin-bottom:3px; color:#53359e; font-size:10px;">WESM Spot Access:</div>
+            <div style="font-size:10.5px; color:#4a5770; line-height:1.35;">
               • Requires IEMOP registration &amp; collateral deposit.<br>
               • Or engage a licensed RES with spot pass-through tariff.
             </div>
           `;
         } else if (isEligible) {
           el.calcStepsBox.innerHTML = `
-            <div style="font-weight:700; margin-bottom:3px; color:#0f172a; font-size:10px;">📋 Next Steps to Switch:</div>
-            <div style="font-size:9.5px; color:#475569; line-height:1.35;">
-              1. Secure <strong>Certificate of Contestability (CC)</strong> from ${escapeHtml(du?.acronym || "DU")}.<br>
-              2. Sign Retail Supply Contract (RSC) at target rate.<br>
-              3. Verify AMI smart meter installation.
+            <div style="font-weight:700; margin-bottom:3px; color:#14213d; font-size:10px;">Next Steps to Switch:</div>
+            <div style="font-size:10.5px; color:#4a5770; line-height:1.35;">
+              1. Confirm with ${escapeHtml(du?.acronym || "your DU")} that your average monthly peak demand is at least 100 kW.<br>
+              2. Agree terms with a supplier, then send your Letter of Intent at least 90 days before the switch date.<br>
+              3. The DU upgrades your meter no later than 30 days before the switch.<br>
+              <a href="#" class="guide-link" data-goto-guide>See the full switching guide</a>
             </div>
           `;
         } else {
           el.calcStepsBox.innerHTML = `
-            <div style="font-weight:700; margin-bottom:3px; color:#92400e; font-size:10px;">💡 Tip for Sub-100 kW Consumers:</div>
-            <div style="font-size:9.5px; color:#78350f; line-height:1.35;">
+            <div style="font-weight:700; margin-bottom:3px; color:#87520b; font-size:10px;">Tip for Sub-100 kW Consumers:</div>
+            <div style="font-size:10.5px; color:#6e430a; line-height:1.35;">
               Pool contiguous meters with neighbors under <strong>Retail Aggregation (RAP)</strong> to switch immediately!
             </div>
           `;
@@ -1478,17 +1746,17 @@
       const isPoolQualified = totalPooledKw >= 100;
       if (el.calcRapPoolStatus) {
         if (isPoolQualified) {
-          el.calcRapPoolStatus.innerHTML = `✅ Surpasses 100 kW Threshold`;
-          el.calcRapPoolStatus.style.color = "#059669";
+          el.calcRapPoolStatus.innerHTML = `Surpasses 100 kW Threshold`;
+          el.calcRapPoolStatus.style.color = "#13866b";
         } else {
           const needed = (100 - totalPooledKw).toFixed(0);
-          el.calcRapPoolStatus.innerHTML = `⏳ Need +${needed} kW to qualify`;
-          el.calcRapPoolStatus.style.color = "#d97706";
+          el.calcRapPoolStatus.innerHTML = `Need +${needed} kW to qualify`;
+          el.calcRapPoolStatus.style.color = "#c27a12";
         }
       }
 
       // Verdict
-      let icon = isPoolQualified ? "✅" : "⏳";
+      let icon = isPoolQualified ? "✓" : "!";
       let bannerClass = isPoolQualified ? "verdict-banner" : "verdict-banner upcoming";
       let verdictTitle = isPoolQualified
         ? `RAP Group Qualified (${totalPooledKw.toFixed(0)} kW Total Pooled Demand)`
@@ -1502,32 +1770,54 @@
       if (el.verdictTitle) el.verdictTitle.textContent = verdictTitle;
       if (el.verdictSub) el.verdictSub.textContent = verdictSub;
 
-      // Group Pooled Savings
-      const rateDiff = Math.max(0.15, duBaseRate - chosenSupplierRate);
+      // Group Pooled Savings — can be negative if the offer is above the captive rate
+      const rateDiff = duBaseRate - chosenSupplierRate;
       const totalMonthlySavings = kwh * rateDiff;
       const totalAnnualSavings = totalMonthlySavings * 12;
       const memberAnnualSavings = totalAnnualSavings / members;
+      const word = rateDiff >= 0 ? "Savings" : "Extra cost";
 
-      if (el.calcMonthlySavings) el.calcMonthlySavings.textContent = `₱${Math.round(totalMonthlySavings).toLocaleString()}`;
-      if (el.calcMonthlySub) el.calcMonthlySub.textContent = `Total group savings vs. DU tariff`;
-      if (el.calcAnnualSavings) el.calcAnnualSavings.textContent = `₱${Math.round(totalAnnualSavings).toLocaleString()}`;
-      if (el.calcAnnualSub) el.calcAnnualSub.textContent = `Pooled group savings per year`;
+      if (el.calcMonthlyLabel) el.calcMonthlyLabel.textContent = isPoolQualified ? `Group Monthly ${word}` : "Group Monthly Savings";
+      if (el.calcAnnualLabel) el.calcAnnualLabel.textContent = isPoolQualified ? `Group Annual ${word}` : "Group Annual Savings";
+      if (el.calcMonthlySavings) {
+        el.calcMonthlySavings.textContent = isPoolQualified ? signedPeso(Math.abs(totalMonthlySavings)) : "—";
+        el.calcMonthlySavings.classList.toggle("negative", isPoolQualified && totalMonthlySavings < 0);
+      }
+      if (el.calcMonthlySub) el.calcMonthlySub.textContent = isPoolQualified ? `Whole group vs. ${du?.acronym} captive rate` : "Pool must reach 100 kW first";
+      if (el.calcAnnualSavings) {
+        el.calcAnnualSavings.textContent = isPoolQualified ? signedPeso(Math.abs(totalAnnualSavings)) : "—";
+        el.calcAnnualSavings.classList.toggle("negative", isPoolQualified && totalAnnualSavings < 0);
+        el.calcAnnualSavings.closest(".saving-box")?.classList.toggle("is-cost", isPoolQualified && totalAnnualSavings < 0);
+      }
+      if (el.calcAnnualSub) el.calcAnnualSub.textContent = `at ₱${chosenSupplierRate.toFixed(4)}/kWh`;
+
+      const poolLf = totalPooledKw > 0 ? kwh / (totalPooledKw * HOURS_PER_MONTH) : 0;
+      if (el.calcLfWarning) {
+        if (poolLf > 1) {
+          el.calcLfWarning.style.display = "block";
+          el.calcLfWarning.innerHTML = `${kwh.toLocaleString()} kWh/month is more than ${members} meters × ${kwPerMember} kW can use running flat-out (${Math.round(totalPooledKw * HOURS_PER_MONTH).toLocaleString()} kWh).`;
+        } else {
+          el.calcLfWarning.style.display = "none";
+        }
+      }
 
       if (el.calcExtraMetricCard) {
         el.calcExtraMetricCard.style.display = "block";
         el.calcExtraMetricCard.className = "extra-metric-card";
-        el.calcExtraMetricCard.style.background = "#fffbeb";
-        el.calcExtraMetricCard.style.borderColor = "#fde68a";
-        el.calcExtraMetricCard.style.color = "#92400e";
+        el.calcExtraMetricCard.style.background = "#fcf6ea";
+        el.calcExtraMetricCard.style.borderColor = "#eed3a4";
+        el.calcExtraMetricCard.style.color = "#87520b";
         el.calcExtraMetricCard.innerHTML = `
-          <div style="font-weight:800; margin-bottom:2px;">👥 Per-Member Breakdown:</div>
-          <div>Each of the <strong>${members} members</strong> saves an average of <strong>₱${Math.round(memberAnnualSavings).toLocaleString()} / year</strong> (₱${Math.round(memberAnnualSavings / 12).toLocaleString()} / month) by joining the aggregation pool!</div>
+          <div style="font-weight:800; margin-bottom:2px;">Per-Member Breakdown:</div>
+          <div>${isPoolQualified
+            ? `Each of the <strong>${members} members</strong> ${memberAnnualSavings >= 0 ? "saves" : "pays"} about <strong>${signedPeso(Math.abs(memberAnnualSavings))} / year</strong> (${signedPeso(Math.abs(memberAnnualSavings) / 12)} / month) ${memberAnnualSavings >= 0 ? "less" : "more"} than on the captive rate.`
+            : `Per-member figures appear once the pool reaches 100 kW.`}</div>
         `;
       }
 
       if (el.calcStepsBox) {
         el.calcStepsBox.innerHTML = `
-          <div style="font-weight:700; margin-bottom:3px; color:#0f172a;">📦 Retail Aggregation Program (RAP) Rules:</div>
+          <div style="font-weight:700; margin-bottom:3px; color:#14213d;">Retail Aggregation Program (RAP) Rules:</div>
           <ol style="padding-left:16px; margin:0; line-height:1.4;">
             <li>All aggregated meters must reside within the same DU franchise (${escapeHtml(du?.acronym)}).</li>
             <li>Execute an Aggregation Agreement with a licensed Retail Aggregator.</li>
@@ -1550,6 +1840,10 @@
     const q = (state.suppSearchQuery || "").trim().toLowerCase();
     const gFilter = state.suppGroupFilter || "all";
 
+    const resList = rdata.res_suppliers_expanded || [];
+    const lresCount = resList.filter((r) => /local res/i.test(r.type || "")).length;
+    const resCount = resList.length - lresCount;
+
     // Update Market Banner
     if (el.suppMarketBanner) {
       if (type === "res") {
@@ -1557,19 +1851,19 @@
           <div class="supp-market-stats-row">
             <div class="supp-market-stat">
               <span class="sstat-lbl">Active Retail Suppliers</span>
-              <span class="sstat-val">39 RES + 2 LRES (41)</span>
+              <span class="sstat-val">${resCount} RES + ${lresCount} LRES (${resCount + lresCount})</span>
             </div>
             <div class="supp-market-stat">
               <span class="sstat-lbl">Contracted Demand</span>
-              <span class="sstat-val">5,080.70 MW</span>
+              <span class="sstat-val">${Number(summary.crem?.total_mw ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} MW</span>
             </div>
             <div class="supp-market-stat highlight">
-              <span class="sstat-lbl">Market WAP (Q2 2026)</span>
-              <span class="sstat-val">₱5.8300/kWh</span>
+              <span class="sstat-lbl">Market WAP (${escapeHtml(RETAIL_MKT.crem_period || REPORT_LABEL)})</span>
+              <span class="sstat-val">${peso(MARKET_WAP.crem)}/kWh</span>
             </div>
           </div>
-          <div style="font-size:8px; color:#64748b; margin-top:3px;">
-            Aboitiz (25.8%) · Meralco (25.0%) · San Miguel (14.2%) · First Gen (8.9%) · Ayala (8.1%)
+          <div style="font-size:9.5px; color:#66728a; margin-top:3px;">
+            ${(summary.crem?.top_groups || []).map((g) => `${escapeHtml(g.group.replace(/ Group$/, ""))} (${Number(g.share).toFixed(1)}%)`).join(" · ")}
           </div>
         `;
       } else if (type === "geop") {
@@ -1577,19 +1871,19 @@
           <div class="supp-market-stats-row">
             <div class="supp-market-stat">
               <span class="sstat-lbl">Active RE Suppliers</span>
-              <span class="sstat-val">15 RE Suppliers</span>
+              <span class="sstat-val">${(rdata.geop_suppliers_expanded || []).length} RE Suppliers</span>
             </div>
             <div class="supp-market-stat">
               <span class="sstat-lbl">GEOP Demand</span>
-              <span class="sstat-val">303.52 MW (985 EUs)</span>
+              <span class="sstat-val">${Number(summary.geop?.total_mw ?? 0).toFixed(2)} MW (${Number(summary.geop?.total_eus ?? 0).toLocaleString()} EUs)</span>
             </div>
             <div class="supp-market-stat highlight">
-              <span class="sstat-lbl">GEOP WAP (Q2 2026)</span>
-              <span class="sstat-val" style="color:#059669;">₱6.1200/kWh</span>
+              <span class="sstat-lbl">GEOP WAP (${escapeHtml(RETAIL_MKT.geop_period || REPORT_LABEL)})</span>
+              <span class="sstat-val" style="color:#13866b;">${peso(MARKET_WAP.geop)}/kWh</span>
             </div>
           </div>
-          <div style="font-size:8px; color:#047857; margin-top:3px;">
-            100% Zero-Carbon Renewable Energy (Geothermal, Solar PV, Run-of-River Hydro) · ACEN Market Leader (51.3%)
+          <div style="font-size:9.5px; color:#0f7059; margin-top:3px;">
+            100% Zero-Carbon Renewable Energy (Geothermal, Solar PV, Run-of-River Hydro) · ${escapeHtml(summary.geop?.market_leader?.name || "")} Market Leader (${Number(summary.geop?.market_leader?.share ?? 0).toFixed(1)}%)
           </div>
         `;
       } else if (type === "rap") {
@@ -1597,19 +1891,19 @@
           <div class="supp-market-stats-row">
             <div class="supp-market-stat">
               <span class="sstat-lbl">Retail Aggregators</span>
-              <span class="sstat-val">20 Aggregators</span>
+              <span class="sstat-val">${(rdata.rap_aggregators_expanded || []).length} Aggregators</span>
             </div>
             <div class="supp-market-stat">
               <span class="sstat-lbl">Aggregated Members</span>
-              <span class="sstat-val">4,997 (311 Groups)</span>
+              <span class="sstat-val">${Number(summary.rap?.total_members ?? 0).toLocaleString()} (${summary.rap?.total_groups ?? 0} Groups)</span>
             </div>
             <div class="supp-market-stat highlight">
-              <span class="sstat-lbl">RAP WAP (Q2 2026)</span>
-              <span class="sstat-val" style="color:#d97706;">₱5.8400/kWh</span>
+              <span class="sstat-lbl">RAP WAP (${escapeHtml(RETAIL_MKT.rap_period || REPORT_LABEL)})</span>
+              <span class="sstat-val" style="color:#c27a12;">${peso(MARKET_WAP.rap)}/kWh</span>
             </div>
           </div>
-          <div style="font-size:8px; color:#b45309; margin-top:3px;">
-            Small end-users (&lt;100 kW) pooled into ≥100 kW within single franchise · MPower (47.8 MW) &amp; ACEN (1,488 Mems) Leaders
+          <div style="font-size:9.5px; color:#a2650d; margin-top:3px;">
+            Small end-users (&lt;100 kW) pooled into ≥100 kW within single franchise · ${escapeHtml((summary.rap?.demand_leader?.name || "").replace(/ \(.*\)$/, ""))} (${Number(summary.rap?.demand_leader?.mw ?? 0).toFixed(1)} MW) &amp; ${escapeHtml(summary.rap?.membership_leader?.name || "")} (${Number(summary.rap?.membership_leader?.members ?? 0).toLocaleString()} members) lead
           </div>
         `;
       }
@@ -1618,15 +1912,14 @@
     // Render Group Filter Chips
     if (el.suppGroupChipsRow) {
       if (type === "res") {
+        const GROUP_KEYS = ["Aboitiz", "MERALCO", "San Miguel", "First Gen", "Ayala", "Citicore"];
+        const LABELS = { MERALCO: "Meralco" };
+        const countFor = (k) => resList.filter((r) => (r.group || "").toLowerCase().includes(k.toLowerCase())).length;
+        const indep = resList.filter((r) => !GROUP_KEYS.some((k) => (r.group || "").toLowerCase().includes(k.toLowerCase()))).length;
         const groups = [
-          { id: "all", label: "All Groups (41)" },
-          { id: "Aboitiz", label: "Aboitiz (5)" },
-          { id: "MERALCO", label: "Meralco (5)" },
-          { id: "San Miguel", label: "San Miguel (3)" },
-          { id: "First Gen", label: "First Gen (3)" },
-          { id: "Ayala", label: "Ayala (2)" },
-          { id: "Citicore", label: "Citicore (2)" },
-          { id: "Independent", label: "Independent (17)" },
+          { id: "all", label: `All Groups (${resList.length})` },
+          ...GROUP_KEYS.map((k) => ({ id: k, label: `${LABELS[k] || k} (${countFor(k)})` })).filter((g) => !/\(0\)$/.test(g.label)),
+          { id: "Independent", label: `Independent (${indep})` },
         ];
         el.suppGroupChipsRow.style.display = "flex";
         el.suppGroupChipsRow.innerHTML = groups
@@ -1672,7 +1965,7 @@
     }
 
     if (list.length === 0) {
-      el.suppListContainer.innerHTML = `<div style="text-align:center; padding:35px 10px; font-size:11px; color:#94a3b8;">No matching suppliers found</div>`;
+      el.suppListContainer.innerHTML = `<div style="text-align:center; padding:35px 10px; font-size:11px; color:#97a1b3;">No matching suppliers found</div>`;
       return;
     }
 
@@ -1710,7 +2003,7 @@
               <div class="supp-card-sub-tags">
                 ${group ? `<span class="supp-tag group">${escapeHtml(group)}</span>` : ""}
                 <span class="supp-tag ${typeClass}">${escapeHtml(typeTag)}</span>
-                ${item.capacity_mw ? `<span class="supp-tag" style="background:#f8fafc; color:#64748b;">Allocation: ${item.capacity_mw.toFixed(1)} MW</span>` : ""}
+                ${item.capacity_mw ? `<span class="supp-tag" style="background:#f5f7fa; color:#66728a;">Allocation: ${item.capacity_mw.toFixed(1)} MW</span>` : ""}
               </div>
             </div>
             <span class="supp-chevron">▼</span>
@@ -1746,7 +2039,7 @@
             ${sourcing ? `<div class="supp-detail-row"><strong>Sourcing &amp; Governance:</strong> ${escapeHtml(sourcing)}</div>` : ""}
             ${compliance ? `<div class="supp-compliance-box"><strong>Regulatory Audit:</strong> ${escapeHtml(compliance)}</div>` : ""}
             <div class="supp-action-row">
-              <button class="supp-simulate-btn" data-srate="${item.rate || 5.83}" data-stype="${type}" data-sname="${escapeHtml(shortname)}">⚡ Simulate in Calculator</button>
+              <button class="supp-simulate-btn" data-srate="${item.rate || 5.83}" data-stype="${type}" data-sname="${escapeHtml(shortname)}">Simulate in Calculator</button>
             </div>
           </div>
         </div>
@@ -1775,7 +2068,7 @@
 
         // Set calculator mode
         state.calcMode = stype === "res" ? "crem" : stype;
-        document.querySelectorAll(".calc-mode-pill").forEach((p) => {
+        document.querySelectorAll(".calc-mode-pill[data-mode]").forEach((p) => {
           if (p.getAttribute("data-mode") === state.calcMode) p.classList.add("active");
           else p.classList.remove("active");
         });
@@ -1817,7 +2110,7 @@
             <span class="roadmap-badge ${r.badge}">${r.status}</span>
           </div>
           <div class="roadmap-card-sub">${r.theme}</div>
-          <ul style="padding-left:14px; margin:4px 0 0; font-size:9.5px; color:#475569; line-height:1.4;">
+          <ul style="padding-left:14px; margin:4px 0 0; font-size:10.5px; color:#4a5770; line-height:1.4;">
             ${r.details.map((d) => `<li>${escapeHtml(d)}</li>`).join("")}
           </ul>
         </div>
@@ -1851,16 +2144,16 @@
 
     if (!du1 || !du2) return;
 
-    const rate1 = du1.base_rate || "₱7.3300";
-    const rate2 = du2.base_rate || "₱5.7052";
+    const rate1 = fmtRate(du1);
+    const rate2 = fmtRate(du2);
 
     el.compareResultCard.innerHTML = `
       <table class="compare-table">
         <thead>
           <tr>
             <th>Metric</th>
-            <th style="color:#2563eb;">${escapeHtml(du1.acronym)}</th>
-            <th style="color:#059669;">${escapeHtml(du2.acronym)}</th>
+            <th style="color:#2d5bd7;">${escapeHtml(du1.acronym)}</th>
+            <th style="color:#13866b;">${escapeHtml(du2.acronym)}</th>
           </tr>
         </thead>
         <tbody>
@@ -1871,13 +2164,13 @@
           </tr>
           <tr>
             <td>URR Base Rate &amp; Period</td>
-            <td><strong>${rate1}/kWh</strong><br><span style="font-size:8px; color:#059669; font-weight:700;">📅 ${escapeHtml(du1.urr_month || "URR Filing")}</span></td>
-            <td><strong>${rate2}/kWh</strong><br><span style="font-size:8px; color:#059669; font-weight:700;">📅 ${escapeHtml(du2.urr_month || "URR Filing")}</span></td>
+            <td><strong>${rate1}/kWh</strong><br><span style="font-size:9.5px; color:#13866b; font-weight:700;">${escapeHtml(fmtMonth(du1.urr_month))}</span>${staleTag(du1)}</td>
+            <td><strong>${rate2}/kWh</strong><br><span style="font-size:9.5px; color:#13866b; font-weight:700;">${escapeHtml(fmtMonth(du2.urr_month))}</span>${staleTag(du2)}</td>
           </tr>
           <tr>
             <td>Latest URR WESM Spot Rate</td>
-            <td><strong style="color:#7c3aed;">₱${(du1.wesm_data?.latest_rate || 5.4513).toFixed(4)}/kWh</strong><br><span style="font-size:8px; color:#7c3aed; font-weight:700;">⚡ ${du1.wesm_data?.genmix_pct || 15}% Spot Mix</span></td>
-            <td><strong style="color:#7c3aed;">₱${(du2.wesm_data?.latest_rate || 5.4513).toFixed(4)}/kWh</strong><br><span style="font-size:8px; color:#7c3aed; font-weight:700;">⚡ ${du2.wesm_data?.genmix_pct || 15}% Spot Mix</span></td>
+            <td><strong style="color:#6b46c1;">₱${duSpotRate(du1).toFixed(4)}/kWh</strong><br><span style="font-size:9.5px; color:#6b46c1; font-weight:700;">${du1.wesm_data?.latest_rate ? `${du1.wesm_data.genmix_pct}% Spot Mix` : `${escapeHtml(du1.grid)} regional GWAP`}</span></td>
+            <td><strong style="color:#6b46c1;">₱${duSpotRate(du2).toFixed(4)}/kWh</strong><br><span style="font-size:9.5px; color:#6b46c1; font-weight:700;">${du2.wesm_data?.latest_rate ? `${du2.wesm_data.genmix_pct}% Spot Mix` : `${escapeHtml(du2.grid)} regional GWAP`}</span></td>
           </tr>
           <tr>
             <td>Annual WESM Procurement</td>
@@ -1891,13 +2184,13 @@
           </tr>
           <tr>
             <td>Carve-Out Protected MW</td>
-            <td><strong style="color:#059669;">🟢 ${du1.psa_summary?.carved_out_mw || 0} MW</strong> (${du1.psa_summary?.carveout_share_pct || 0}%)</td>
-            <td><strong style="color:#059669;">🟢 ${du2.psa_summary?.carved_out_mw || 0} MW</strong> (${du2.psa_summary?.carveout_share_pct || 0}%)</td>
+            <td><strong style="color:#13866b;">${du1.psa_summary?.carved_out_mw || 0} MW</strong> (${du1.psa_summary?.carveout_share_pct || 0}%)</td>
+            <td><strong style="color:#13866b;">${du2.psa_summary?.carved_out_mw || 0} MW</strong> (${du2.psa_summary?.carveout_share_pct || 0}%)</td>
           </tr>
           <tr>
             <td>Locked Take-or-Pay MW</td>
-            <td><strong style="color:#dc2626;">🔴 ${du1.psa_summary?.locked_mw || 0} MW</strong> (${(100 - (du1.psa_summary?.carveout_share_pct || 0)).toFixed(1)}%)</td>
-            <td><strong style="color:#dc2626;">🔴 ${du2.psa_summary?.locked_mw || 0} MW</strong> (${(100 - (du2.psa_summary?.carveout_share_pct || 0)).toFixed(1)}%)</td>
+            <td><strong style="color:#c2362b;">${du1.psa_summary?.locked_mw || 0} MW</strong> (${(100 - (du1.psa_summary?.carveout_share_pct || 0)).toFixed(1)}%)</td>
+            <td><strong style="color:#c2362b;">${du2.psa_summary?.locked_mw || 0} MW</strong> (${(100 - (du2.psa_summary?.carveout_share_pct || 0)).toFixed(1)}%)</td>
           </tr>
           <tr>
             <td>Weighted Bilateral PSA Rate</td>
@@ -1951,12 +2244,22 @@
     const captive = mp.captive_market || {};
     const dus = rdata.dus || [];
 
+    const capWap = captive.national_captive_wap ?? 6.845;
+    const vsCap = (wap) => {
+      const d = capWap - wap;
+      return `${d >= 0 ? "Below" : "Above"} national captive avg by ${Math.abs((d / capWap) * 100).toFixed(1)}% (${peso(Math.abs(d))}/kWh)`;
+    };
+    const urrMonths = dus.map((d) => parseMonth(d.urr_month)).filter(Boolean).sort((a, b) => a - b);
+    const urrRange = urrMonths.length
+      ? `${MONTH_ABBR[urrMonths[0].getMonth()]} ${urrMonths[0].getFullYear()} – ${MONTH_ABBR[urrMonths[urrMonths.length - 1].getMonth()]} ${urrMonths[urrMonths.length - 1].getFullYear()}`
+      : "undated";
+
     if (state.pricesMode === "matrix") {
       el.pricesContainer.innerHTML = `
         <div class="price-banner-box">
           <div class="price-banner-title">
             <span>Philippine Multi-Market Price Structure</span>
-            <span style="font-size:9.5px; background:rgba(255,255,255,0.2); padding:2px 6px; border-radius:12px;">Q2 2026 Benchmark</span>
+            <span style="font-size:10.5px; background:rgba(255,255,255,0.2); padding:2px 6px; border-radius:12px;">${escapeHtml(REPORT_LABEL)} data</span>
           </div>
           <div class="price-banner-sub">
             Wholesale Spot (WESM) · Retail Open Access (CREM) · Green Choice (GEOP) · Regulated Captive Tariffs.
@@ -1971,19 +2274,19 @@
                 <span class="market-badge-pill spot">Wholesale</span>
                 <span class="market-title-text">WESM Spot Market (GWAP)</span>
               </div>
-              <div class="market-rate-hero" style="color:#7c3aed;">
-                ₱${(spot.national_gwap || 4.4038).toFixed(4)}
+              <div class="market-rate-hero" style="color:#6b46c1;">
+                ${peso(MARKET_WAP.wesm)}
                 <span class="rate-unit">/kWh</span>
               </div>
             </div>
             <div class="market-stats-row">
               <div class="market-stat-col">
                 <div class="market-stat-label">Total Volume</div>
-                <div class="market-stat-val">${(spot.volume_gwh || 17360.8).toLocaleString()} GWh</div>
+                <div class="market-stat-val">${Number(spot.volume_gwh ?? 0).toLocaleString()} GWh</div>
               </div>
               <div class="market-stat-col">
                 <div class="market-stat-label">Market Spend</div>
-                <div class="market-stat-val">₱${spot.annual_spend_billion || 76.32}B</div>
+                <div class="market-stat-val">₱${spot.annual_spend_billion ?? "—"}B</div>
               </div>
               <div class="market-stat-col">
                 <div class="market-stat-label">Operator</div>
@@ -1991,9 +2294,9 @@
               </div>
             </div>
             <div class="market-spread-box">
-              <span>Regional GWAP: Luzon ₱4.3140 · Visayas ₱4.9967 · Mindanao ₱3.9837</span>
+              <span>Regional GWAP: ${["Luzon", "Visayas", "Mindanao"].map((g) => `${g} ${peso(regionalGwap(g))}`).join(" · ")}</span>
             </div>
-            <div class="market-citation">Source: 2025–2026 WESM Final True-Up Filings</div>
+            <div class="market-citation">Source: ${escapeHtml(spot.period || "WESM filings")}</div>
           </div>
 
           <!-- CREM Retail Open Access -->
@@ -2003,28 +2306,28 @@
                 <span class="market-badge-pill crem">Retail</span>
                 <span class="market-title-text">Competitive Retail (CREM WAP)</span>
               </div>
-              <div class="market-rate-hero" style="color:#2563eb;">
-                ₱${(retail.crem_wap || 5.8300).toFixed(4)}
+              <div class="market-rate-hero" style="color:#2d5bd7;">
+                ${peso(MARKET_WAP.crem)}
                 <span class="rate-unit">/kWh</span>
               </div>
             </div>
             <div class="market-stats-row">
               <div class="market-stat-col">
                 <div class="market-stat-label">Total Demand</div>
-                <div class="market-stat-val">${(retail.crem_demand_mw || 5080.7).toFixed(1)} MW</div>
+                <div class="market-stat-val">${Number(retail.crem_demand_mw ?? 0).toFixed(1)} MW</div>
               </div>
               <div class="market-stat-col">
                 <div class="market-stat-label">Active EUs</div>
-                <div class="market-stat-val">${(retail.crem_eus || 2692).toLocaleString()}</div>
+                <div class="market-stat-val">${Number(retail.crem_eus ?? 0).toLocaleString()}</div>
               </div>
               <div class="market-stat-col">
                 <div class="market-stat-label">Suppliers</div>
-                <div class="market-stat-val">${retail.crem_suppliers || 41} RES</div>
+                <div class="market-stat-val">${retail.crem_suppliers ?? "—"} RES</div>
               </div>
             </div>
             <div class="market-spread-box savings">
-              <span>Savings vs Captive: -14.8% (-₱1.0150/kWh)</span>
-              <span>RES Margin: +₱1.4262/kWh</span>
+              <span>${vsCap(MARKET_WAP.crem)}</span>
+              <span>Over spot: +${peso(MARKET_WAP.crem - MARKET_WAP.wesm)}/kWh</span>
             </div>
             <div class="market-citation">Source: ${escapeHtml(retail.crem_period || "2Q 2026 MOS-CMD (Aug 2026)")}</div>
           </div>
@@ -2036,8 +2339,8 @@
                 <span class="market-badge-pill geop">Renewable</span>
                 <span class="market-title-text">Green Energy Option (GEOP WAP)</span>
               </div>
-              <div class="market-rate-hero" style="color:#059669;">
-                ₱${(retail.geop_wap || 6.1200).toFixed(4)}
+              <div class="market-rate-hero" style="color:#13866b;">
+                ${peso(MARKET_WAP.geop)}
                 <span class="rate-unit">/kWh</span>
               </div>
             </div>
@@ -2056,8 +2359,8 @@
               </div>
             </div>
             <div class="market-spread-box savings">
-              <span>Savings vs Captive: -10.6% (-₱0.7250/kWh)</span>
-              <span>Green Premium: +₱0.29/kWh</span>
+              <span>${vsCap(MARKET_WAP.geop)}</span>
+              <span>Green premium over CREM: +${peso(MARKET_WAP.geop - MARKET_WAP.crem, 2)}/kWh</span>
             </div>
             <div class="market-citation">Source: ${escapeHtml(retail.geop_period || "2Q 2026 MOS-CMD (Aug 2026)")}</div>
           </div>
@@ -2069,8 +2372,8 @@
                 <span class="market-badge-pill rap">Aggregation</span>
                 <span class="market-title-text">Retail Aggregation (RAP WAP)</span>
               </div>
-              <div class="market-rate-hero" style="color:#b45309;">
-                ₱${(retail.rap_wap || 5.8400).toFixed(4)}
+              <div class="market-rate-hero" style="color:#a2650d;">
+                ${peso(MARKET_WAP.rap)}
                 <span class="rate-unit">/kWh</span>
               </div>
             </div>
@@ -2089,8 +2392,8 @@
               </div>
             </div>
             <div class="market-spread-box savings">
-              <span>Savings vs Captive: -14.7% (-₱1.0050/kWh)</span>
-              <span>CREM Parity: +₱0.0100/kWh</span>
+              <span>${vsCap(MARKET_WAP.rap)}</span>
+              <span>vs. CREM: ${MARKET_WAP.rap - MARKET_WAP.crem >= 0 ? "+" : "−"}${peso(Math.abs(MARKET_WAP.rap - MARKET_WAP.crem))}/kWh</span>
             </div>
             <div class="market-citation">Source: ${escapeHtml(retail.rap_period || "2Q 2026 MOS-CMD (Aug 2026)")}</div>
           </div>
@@ -2102,27 +2405,27 @@
                 <span class="market-badge-pill captive">Regulated</span>
                 <span class="market-title-text">Captive DU Tariffs (National WAP)</span>
               </div>
-              <div class="market-rate-hero" style="color:#475569;">
-                ₱${(captive.national_captive_wap || 6.8450).toFixed(4)}
+              <div class="market-rate-hero" style="color:#4a5770;">
+                ${peso(capWap)}
                 <span class="rate-unit">/kWh</span>
               </div>
             </div>
             <div class="market-stats-row">
               <div class="market-stat-col">
                 <div class="market-stat-label">Luzon Base</div>
-                <div class="market-stat-val">₱${(captive.luzon_captive_wap || 6.9820).toFixed(4)}</div>
+                <div class="market-stat-val">${captive.luzon_captive_wap ? peso(captive.luzon_captive_wap) : "—"}</div>
               </div>
               <div class="market-stat-col">
                 <div class="market-stat-label">Visayas Base</div>
-                <div class="market-stat-val">₱${(captive.visayas_captive_wap || 6.4210).toFixed(4)}</div>
+                <div class="market-stat-val">${captive.visayas_captive_wap ? peso(captive.visayas_captive_wap) : "—"}</div>
               </div>
               <div class="market-stat-col">
                 <div class="market-stat-label">Mindanao Base</div>
-                <div class="market-stat-val">₱${(captive.mindanao_captive_wap || 6.1540).toFixed(4)}</div>
+                <div class="market-stat-val">${captive.mindanao_captive_wap ? peso(captive.mindanao_captive_wap) : "—"}</div>
               </div>
             </div>
             <div class="market-spread-box">
-              <span>Regulated monopoly generation charge filed monthly under ERC URR rules.</span>
+              <span>Generation charge from each DU's latest URR filing. Filings in the app run ${urrRange}; the data file labels this average “${escapeHtml(captive.period || "")}”.</span>
             </div>
             <div class="market-citation">Source: ${escapeHtml(captive.source || "ERC MOS-CMD Captive Filings")}</div>
           </div>
@@ -2136,33 +2439,29 @@
         <div class="spot-grid-layout">
           <div class="spot-gwap-card">
             <div style="display:flex; align-items:center; justify-content:space-between;">
-              <span style="font-size:12px; font-weight:800; color:#0f172a;">⚡ Regional Spot Clearing (GWAP)</span>
-              <span style="font-size:9px; font-weight:700; color:#7c3aed; background:#ede9fe; padding:2px 8px; border-radius:10px;">National: ₱4.4038</span>
+              <span style="font-size:12px; font-weight:800; color:#14213d;">Regional Spot Clearing (GWAP)</span>
+              <span style="font-size:10px; font-weight:700; color:#6b46c1; background:#ebe5f8; padding:2px 8px; border-radius:10px;">National: ${peso(MARKET_WAP.wesm)}</span>
             </div>
             <div class="spot-regions-row">
-              <div class="spot-region-box">
-                <div class="spot-region-name">Luzon</div>
-                <div class="spot-region-rate">₱4.3140</div>
-                <div class="spot-region-sub">12,512.8 GWh</div>
-              </div>
-              <div class="spot-region-box">
-                <div class="spot-region-name">Visayas</div>
-                <div class="spot-region-rate" style="color:#d97706;">₱4.9967</div>
-                <div class="spot-region-sub">2,992.9 GWh (High)</div>
-              </div>
-              <div class="spot-region-box cheapest">
-                <div class="spot-region-name">Mindanao</div>
-                <div class="spot-region-rate">₱3.9837</div>
-                <div class="spot-region-sub">1,855.1 GWh (Lowest)</div>
-              </div>
+              ${(() => {
+                const regs = ["Luzon", "Visayas", "Mindanao"].map((g) => ({ g, rate: regionalGwap(g), gwh: spot[`${g.toLowerCase()}_gwh`] }));
+                const hi = Math.max(...regs.map((r) => r.rate));
+                const lo = Math.min(...regs.map((r) => r.rate));
+                return regs.map((r) => `
+              <div class="spot-region-box ${r.rate === lo ? "cheapest" : ""}">
+                <div class="spot-region-name">${r.g}</div>
+                <div class="spot-region-rate" ${r.rate === hi ? 'style="color:#c27a12;"' : ""}>${peso(r.rate)}</div>
+                <div class="spot-region-sub">${r.gwh ? `${Number(r.gwh).toLocaleString()} GWh` : ""}${r.rate === hi ? " (Highest)" : r.rate === lo ? " (Lowest)" : ""}</div>
+              </div>`).join("");
+              })()}
             </div>
           </div>
 
           <div class="spot-gwap-card">
-            <div style="font-size:11px; font-weight:800; color:#0f172a; margin-bottom:4px;">
-              🏆 DU Spot Market Exposure Leaderboard
+            <div style="font-size:11px; font-weight:800; color:#14213d; margin-bottom:4px;">
+              DU Spot Market Exposure Leaderboard
             </div>
-            <div style="font-size:8.5px; color:#64748b; margin-bottom:6px;">
+            <div style="font-size:10px; color:#66728a; margin-bottom:6px;">
               Annual WESM spot purchases and generation mix percentage based on ERC Annex C &amp; D filings.
             </div>
             <table class="wesm-du-table">
@@ -2177,10 +2476,10 @@
               <tbody>
                 ${dusWithWesm.slice(0, 10).map((d) => `
                   <tr>
-                    <td><b>${escapeHtml(d.acronym)}</b> <span style="color:#64748b; font-size:8px;">(${escapeHtml(d.grid)})</span></td>
-                    <td style="color:#7c3aed;">₱${d.wesm_data.latest_rate.toFixed(4)}</td>
+                    <td><b>${escapeHtml(d.acronym)}</b> <span style="color:#66728a; font-size:9.5px;">(${escapeHtml(d.grid)})</span></td>
+                    <td style="color:#6b46c1;">₱${d.wesm_data.latest_rate.toFixed(4)}</td>
                     <td>₱${d.wesm_data.avg_rate.toFixed(4)}</td>
-                    <td><span style="background:#eff6ff; color:#1d4ed8; padding:1px 4px; border-radius:4px;">${d.wesm_data.genmix_pct}%</span></td>
+                    <td><span style="background:#eef3fd; color:#2449b5; padding:1px 4px; border-radius:4px;">${d.wesm_data.genmix_pct}%</span></td>
                   </tr>
                 `).join("")}
               </tbody>
@@ -2190,72 +2489,68 @@
       `;
     } else if (state.pricesMode === "arbitrage") {
       const curDu = dus.find((d) => d.id === state.arbitrageDuId) || dus[0];
-      let duBase = 7.3300;
-      if (curDu && curDu.base_rate) {
-        const m = curDu.base_rate.match(/[\d.]+/);
-        if (m) duBase = parseFloat(m[0]);
-      }
-
-      const cremRate = 5.8300;
-      const geopRate = 6.1200;
-      const duSpotRate = curDu.wesm_data?.latest_rate || (curDu.grid === "Visayas" ? 4.9967 : curDu.grid === "Mindanao" ? 3.9837 : 4.3140);
+      const duBase = rateNum(curDu) ?? capWap;
+      const cremRate = MARKET_WAP.crem;
+      const geopRate = MARKET_WAP.geop;
+      const curSpot = duSpotRate(curDu);
+      const sampleKwh = Math.round((100 * HOURS_PER_MONTH * DEFAULT_LOAD_FACTOR) / 100) * 100;
 
       const cremDelta = duBase - cremRate;
       const cremDeltaPct = ((cremDelta / duBase) * 100).toFixed(1);
       const geopDelta = duBase - geopRate;
       const geopDeltaPct = ((geopDelta / duBase) * 100).toFixed(1);
-      const spotDelta = duBase - duSpotRate;
+      const spotDelta = duBase - curSpot;
       const spotDeltaPct = ((spotDelta / duBase) * 100).toFixed(1);
 
       el.pricesContainer.innerHTML = `
         <div class="arbitrage-card">
-          <label style="font-size:9.5px; font-weight:800; color:#475569; display:block; margin-bottom:4px;">
+          <label style="font-size:10.5px; font-weight:800; color:#4a5770; display:block; margin-bottom:4px;">
             Select Distribution Utility for Arbitrage Analysis:
           </label>
           <select id="modalArbitrageSelect" class="calc-select" style="margin-bottom:10px;">
-            ${dus.map((d) => `<option value="${d.id}" ${d.id === curDu.id ? "selected" : ""}>${escapeHtml(d.acronym)} — ${escapeHtml(d.province)} (${d.base_rate || "₱7.3300"}/kWh)</option>`).join("")}
+            ${dus.map((d) => `<option value="${d.id}" ${d.id === curDu.id ? "selected" : ""}>${escapeHtml(d.acronym)} — ${escapeHtml(d.province)} (${fmtRate(d)}/kWh${isStaleRate(d) ? ", old" : ""})</option>`).join("")}
           </select>
 
-          <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:10px; margin-bottom:8px;">
+          <div style="background:#f5f7fa; border:1px solid #dde3eb; border-radius:8px; padding:10px; margin-bottom:8px;">
             <div style="display:flex; justify-content:space-between; align-items:center;">
               <div>
-                <span style="font-size:13px; font-weight:900; color:#0f172a;">${escapeHtml(curDu.acronym)}</span>
-                <span style="font-size:9.5px; color:#64748b; margin-left:4px;">${escapeHtml(curDu.province)}</span>
+                <span style="font-size:13px; font-weight:900; color:#14213d;">${escapeHtml(curDu.acronym)}</span>
+                <span style="font-size:10.5px; color:#66728a; margin-left:4px;">${escapeHtml(curDu.province)}</span>
               </div>
-              <span style="font-size:12px; font-weight:900; color:#b91c1c; background:#fee2e2; padding:2px 8px; border-radius:12px;">
+              <span style="font-size:12px; font-weight:900; color:#a42e25; background:#f9e1de; padding:2px 8px; border-radius:12px;">
                 Captive: ₱${duBase.toFixed(4)}/kWh
               </span>
             </div>
-            <div style="font-size:8.5px; color:#64748b; margin-top:3px;">
-              Filing: ${curDu.urr_month || "Latest URR"} · Spot Gen Mix: ${curDu.wesm_data?.genmix_pct || 15}%
+            <div style="font-size:10px; color:#66728a; margin-top:3px;">
+              Filing: ${escapeHtml(fmtMonth(curDu.urr_month))}${staleTag(curDu)} · ${curDu.wesm_data?.latest_rate ? `Spot share of supply: ${curDu.wesm_data.genmix_pct}%` : `No DU spot data (using ${escapeHtml(curDu.grid)} GWAP)`}
             </div>
           </div>
 
-          <div style="font-size:10px; font-weight:800; color:#0f172a; margin-top:10px; margin-bottom:4px;">
-            📈 Net Spread vs Captive Base Tariff:
+          <div style="font-size:10px; font-weight:800; color:#14213d; margin-top:10px; margin-bottom:4px;">
+            Net Spread vs Captive Base Tariff:
           </div>
           <div class="arbitrage-delta-grid">
             <div class="arbitrage-delta-box ${cremDelta >= 0 ? "positive" : "negative"}">
-              <div class="arbitrage-delta-label">🔵 CREM Net</div>
+              <div class="arbitrage-delta-label">CREM Net</div>
               <div class="arbitrage-delta-val">${cremDelta >= 0 ? `+₱${cremDelta.toFixed(4)}` : `-₱${Math.abs(cremDelta).toFixed(4)}`}</div>
-              <div class="arbitrage-delta-sub">${cremDelta >= 0 ? `-${cremDeltaPct}% savings` : `+${Math.abs(cremDeltaPct)}% premium`}</div>
+              <div class="arbitrage-delta-sub">${cremDelta >= 0 ? `${cremDeltaPct}% cheaper` : `${Math.abs(cremDeltaPct)}% dearer`}</div>
             </div>
             <div class="arbitrage-delta-box ${geopDelta >= 0 ? "positive" : "negative"}">
-              <div class="arbitrage-delta-label">🟢 GEOP Net</div>
+              <div class="arbitrage-delta-label">GEOP Net</div>
               <div class="arbitrage-delta-val">${geopDelta >= 0 ? `+₱${geopDelta.toFixed(4)}` : `-₱${Math.abs(geopDelta).toFixed(4)}`}</div>
-              <div class="arbitrage-delta-sub">${geopDelta >= 0 ? `-${geopDeltaPct}% green` : `+${Math.abs(geopDeltaPct)}% premium`}</div>
+              <div class="arbitrage-delta-sub">${geopDelta >= 0 ? `${geopDeltaPct}% cheaper` : `${Math.abs(geopDeltaPct)}% dearer`}</div>
             </div>
-            <div class="arbitrage-delta-box ${spotDelta >= 0 ? "positive" : "negative"}" style="background:${spotDelta >= 0 ? "#faf5ff" : "#fef2f2"}; border-color:${spotDelta >= 0 ? "#e9d5ff" : "#fecaca"};">
-              <div class="arbitrage-delta-label" style="color:${spotDelta >= 0 ? "#7c3aed" : "#dc2626"};">⚡ Spot Delta</div>
-              <div class="arbitrage-delta-val" style="color:${spotDelta >= 0 ? "#7c3aed" : "#dc2626"};">${spotDelta >= 0 ? `+₱${spotDelta.toFixed(4)}` : `-₱${Math.abs(spotDelta).toFixed(4)}`}</div>
-              <div class="arbitrage-delta-sub">${spotDelta >= 0 ? `-${spotDeltaPct}% spread` : `+${Math.abs(spotDeltaPct)}% premium`}</div>
+            <div class="arbitrage-delta-box ${spotDelta >= 0 ? "positive" : "negative"}" style="background:${spotDelta >= 0 ? "#f6f3fc" : "#fcefed"}; border-color:${spotDelta >= 0 ? "#ddd3f3" : "#f2c3bd"};">
+              <div class="arbitrage-delta-label" style="color:${spotDelta >= 0 ? "#6b46c1" : "#c2362b"};">Spot Delta</div>
+              <div class="arbitrage-delta-val" style="color:${spotDelta >= 0 ? "#6b46c1" : "#c2362b"};">${spotDelta >= 0 ? `+₱${spotDelta.toFixed(4)}` : `-₱${Math.abs(spotDelta).toFixed(4)}`}</div>
+              <div class="arbitrage-delta-sub">${spotDelta >= 0 ? `${spotDeltaPct}% below captive` : `${Math.abs(spotDeltaPct)}% above captive`}</div>
             </div>
           </div>
 
-          <div style="margin-top:10px; padding:7px 10px; background:${cremDelta >= 0 ? "#eff6ff" : "#f8fafc"}; border-radius:8px; border:1px solid ${cremDelta >= 0 ? "#bfdbfe" : "#e2e8f0"}; font-size:9.5px; color:${cremDelta >= 0 ? "#1e40af" : "#475569"}; line-height:1.35;">
-            💡 <b>Arbitrage Summary:</b> ${cremDelta >= 0 
-              ? `Switching from <b>${escapeHtml(curDu.acronym)}</b> to CREM saves <b>₱${cremDelta.toFixed(4)}/kWh</b> (${cremDeltaPct}%) · Est. <b>₱${Math.round(45000 * cremDelta).toLocaleString()}/mo</b> savings (100 kW load).`
-              : `<b>${escapeHtml(curDu.acronym)}</b>'s captive base tariff is competitive (₱${Math.abs(cremDelta).toFixed(4)}/kWh below national CREM WAP). Retail choice available if specialized green or bilateral hedge required.`}
+          <div style="margin-top:10px; padding:7px 10px; background:${cremDelta >= 0 ? "#eef3fd" : "#f5f7fa"}; border-radius:8px; border:1px solid ${cremDelta >= 0 ? "#c7d5f7" : "#dde3eb"}; font-size:10.5px; color:${cremDelta >= 0 ? "#1f3f9c" : "#4a5770"}; line-height:1.35;">
+            <b>Arbitrage Summary:</b> ${cremDelta >= 0 
+              ? `Switching from <b>${escapeHtml(curDu.acronym)}</b> to CREM saves <b>₱${cremDelta.toFixed(4)}/kWh</b> (${cremDeltaPct}%) · Est. <b>₱${Math.round(sampleKwh * cremDelta).toLocaleString()}/mo</b> for a 100 kW customer at ${Math.round(DEFAULT_LOAD_FACTOR * 100)}% load factor (${sampleKwh.toLocaleString()} kWh). Generation charge only.`
+              : `<b>${escapeHtml(curDu.acronym)}</b>'s captive base tariff is competitive (₱${Math.abs(cremDelta).toFixed(4)}/kWh below the national CREM WAP). Retail choice available if specialized green or bilateral hedge required.`}
           </div>
         </div>
       `;
@@ -2265,6 +2560,43 @@
         renderPricesModal();
       });
     }
+  }
+
+  /**
+   * Data Notes modal: sources, assumptions and live data-quality checks
+   */
+  function renderDataNotes() {
+    const box = document.getElementById("dataNotesContainer");
+    if (!box) return;
+    const checks = runDataChecks();
+    const S = RD.summary || {};
+    const lvl = { high: "", medium: "", low: "" };
+    box.innerHTML = `
+      <div class="notes-section">
+        <div class="notes-heading">Sources</div>
+        <div class="notes-text">
+          Market data: ${escapeHtml(S.report_reference || "")} (${escapeHtml(S.report_period || "")}).<br>
+          Captive rates: each utility's latest URR filing, ${escapeHtml(fmtMonth((RD.dus || []).map((d) => d.urr_month).filter((m) => parseMonth(m)).sort((a, b) => parseMonth(a) - parseMonth(b))[0]))} onward.<br>
+          Spot prices: ${escapeHtml(SPOT_MKT.period || "")}.
+        </div>
+      </div>
+      <div class="notes-section">
+        <div class="notes-heading">Calculator assumptions</div>
+        <div class="notes-text">
+          • Compares <b>generation charges only</b>. Distribution, transmission, system loss, taxes and universal charges are paid either way.<br>
+          • Suggested kWh = peak kW × ${HOURS_PER_MONTH} h × ${Math.round(DEFAULT_LOAD_FACTOR * 100)}% load factor, until you type your own.<br>
+          • Captive rates more than ${STALE_MONTHS} months older than ${escapeHtml(REPORT_LABEL)} are tagged “Old rate”.<br>
+          • WESM spot is a reference price; end-users normally reach it only through a RES pass-through offer.
+        </div>
+      </div>
+      <div class="notes-section">
+        <div class="notes-heading">Data checks (${checks.length} open)</div>
+        ${checks.length
+          ? checks.map((c) => `<div class="check-item ${c.level}"><div class="check-title">${lvl[c.level] || ""} ${escapeHtml(c.title)}</div><div class="check-detail">${escapeHtml(c.detail)}</div></div>`).join("")
+          : `<div class="notes-text">All checks pass.</div>`}
+        <div class="notes-text" style="margin-top:6px; color:#66728a;">These checks rerun from data.js every time the app opens, so each one disappears once the data is fixed.</div>
+      </div>
+    `;
   }
 
   /**
@@ -2308,19 +2640,19 @@
 
     if (filtered.length === 0) {
       el.faqListContainer.innerHTML = `
-        <div style="text-align:center; padding:35px 10px; color:#94a3b8;">
-          <div style="font-size:22px; margin-bottom:4px;">🔍</div>
-          <div style="font-size:12px; font-weight:700; color:#0f172a;">No matching questions found</div>
-          <div style="font-size:10px; color:#64748b; margin-top:4px;">Try searching for "threshold", "switching", "rap", or a question ID like "Q142"</div>
+        <div style="text-align:center; padding:35px 10px; color:#97a1b3;">
+          <div style="font-size:22px; margin-bottom:4px;"></div>
+          <div style="font-size:12px; font-weight:700; color:#14213d;">No matching questions found</div>
+          <div style="font-size:10px; color:#66728a; margin-top:4px;">Try searching for "threshold", "switching", "rap", or a question ID like "Q142"</div>
         </div>
       `;
       return;
     }
 
     const headerNote = `
-      <div style="display:flex; justify-content:space-between; align-items:center; font-size:9.5px; font-weight:700; color:#64748b; margin-bottom:8px; padding:2px 4px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; font-size:10.5px; font-weight:700; color:#66728a; margin-bottom:8px; padding:2px 4px;">
         <span>Showing all ${filtered.length} questions${tokens.length > 0 ? " matching query" : " (Q1 to Q501)"}</span>
-        <span style="color:#2563eb; font-size:8.5px; font-weight:700;">Tap tile to read</span>
+        <span style="color:#2d5bd7; font-size:10px; font-weight:700;">Tap tile to read</span>
       </div>
     `;
 
@@ -2356,9 +2688,9 @@
         const text = btn.getAttribute("data-text");
         if (navigator.clipboard && text) {
           navigator.clipboard.writeText(text);
-          showToast("✓ Copied answer to clipboard");
+          showToast("Answer copied");
         } else {
-          showToast("✓ Answer copied");
+          showToast("Answer copied");
         }
       });
     });
@@ -2367,9 +2699,11 @@
   /**
    * Helper: Escape HTML & Highlight Tokens
    */
+  const DECOR_EMOJI = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{2B50}]\uFE0F?\s?/gu;
   function escapeHtml(str) {
     if (!str) return "";
     return String(str)
+      .replace(DECOR_EMOJI, "")
       .replace(/&/g, "&amp;")
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;")
@@ -2456,6 +2790,14 @@
         document.querySelectorAll(".pill-btn").forEach((b) => b.classList.remove("active"));
         btn.classList.add("active");
         state.gridFilter = btn.getAttribute("data-grid");
+        // Keep the bottom card relevant: if the selected utility is outside the chosen grid,
+        // switch to that grid's largest retail market.
+        if (state.gridFilter !== "all" && state.selectedDu?.grid !== state.gridFilter) {
+          const top = (RD.dus || [])
+            .filter((d) => d.grid === state.gridFilter && isDistributionUtility(d))
+            .sort((a, b) => (b.crem_mw || 0) - (a.crem_mw || 0))[0];
+          if (top) selectDu(top, false);
+        }
         renderMarkers();
         updateStatsRibbon();
         const bounds = GRID_BOUNDS[state.gridFilter];
@@ -2538,9 +2880,9 @@
     });
 
     // Calculator Mode Pills (CREM, GEOP, RAP)
-    document.querySelectorAll(".calc-mode-pill").forEach((pill) => {
+    document.querySelectorAll(".calc-mode-pill[data-mode]").forEach((pill) => {
       pill.addEventListener("click", () => {
-        document.querySelectorAll(".calc-mode-pill").forEach((p) => p.classList.remove("active"));
+        document.querySelectorAll(".calc-mode-pill[data-mode]").forEach((p) => p.classList.remove("active"));
         pill.classList.add("active");
         state.calcMode = pill.getAttribute("data-mode");
         updateCalculatorModeUI();
@@ -2551,6 +2893,7 @@
     el.calcKwInput?.addEventListener("input", (e) => {
       state.calcKw = parseFloat(e.target.value) || 150;
       document.querySelectorAll(".preset-chip").forEach((c) => c.classList.remove("active"));
+      syncSuggestedKwh();
       recalcSavings();
     });
 
@@ -2561,17 +2904,20 @@
         const kw = parseFloat(chip.getAttribute("data-kw")) || 150;
         state.calcKw = kw;
         if (el.calcKwInput) el.calcKwInput.value = kw;
+        syncSuggestedKwh();
         recalcSavings();
       });
     });
 
     el.calcRapMembersInput?.addEventListener("input", (e) => {
       state.calcRapMembers = parseInt(e.target.value, 10) || 10;
+      syncSuggestedKwh();
       recalcSavings();
     });
 
     el.calcRapKwPerMember?.addEventListener("input", (e) => {
       state.calcRapKwPerMember = parseFloat(e.target.value) || 15;
+      syncSuggestedKwh();
       recalcSavings();
     });
 
@@ -2589,7 +2935,8 @@
     });
 
     el.calcKwhInput?.addEventListener("input", (e) => {
-      state.calcKwh = parseFloat(e.target.value) || 65000;
+      state.calcKwh = parseFloat(e.target.value) || 0;
+      state.kwhTouched = e.target.value !== "";
       recalcSavings();
     });
 
@@ -2599,10 +2946,11 @@
       const monthly = el.calcMonthlySavings?.textContent || "₱0";
       const annual = el.calcAnnualSavings?.textContent || "₱0";
       const verdict = el.verdictTitle?.textContent || "";
-      const text = `RetailMarket PH Analysis (${mode}):\nVerdict: ${verdict}\nEst. Monthly Savings: ${monthly}\nProjected Annual Savings: ${annual}\nBenchmark WAP vs DU URR Captive Rate`;
+      const du = (RD.dus || []).find((d) => d.id === state.calcDuId);
+      const text = `RetailMarket PH Analysis (${mode}):\nUtility: ${du?.acronym || ""} (captive ${fmtRate(du)}/kWh, ${fmtMonth(du?.urr_month)}${isStaleRate(du) ? ", rate older than market data" : ""})\nOffer: ${el.calcSupplierSelect?.selectedOptions?.[0]?.textContent?.trim() || ""}\nConsumption: ${Number(state.calcKwh).toLocaleString()} kWh/month\nVerdict: ${verdict}\nMonthly: ${monthly}\nAnnual: ${annual}\nGeneration charges only; DU wheeling charges unchanged.`;
       if (navigator.clipboard) {
         navigator.clipboard.writeText(text);
-        showToast("✓ Executive report copied to clipboard");
+        showToast("Report copied");
       }
     });
 
@@ -2724,8 +3072,38 @@
       renderComparison();
     });
 
+    // Data Notes modal (opened from the brand button)
+    const notesModal = document.getElementById("dataNotesModal");
+    document.getElementById("brandPill")?.addEventListener("click", () => {
+      renderDataNotes();
+      notesModal?.classList.add("active");
+    });
+    document.getElementById("closeDataNotesBtn")?.addEventListener("click", () => notesModal?.classList.remove("active"));
+    notesModal?.addEventListener("click", (e) => {
+      if (e.target === notesModal) notesModal.classList.remove("active");
+    });
+
+    // Escape closes any open sheet
+    document.addEventListener("keydown", (e) => {
+      if (e.key !== "Escape") return;
+      document.querySelectorAll(".modal-overlay.active").forEach((m) => m.classList.remove("active"));
+      closeSearch();
+    });
+
     collapseCard();
   }
+
+  // Small public surface for features.js (simulator, sharing, guide, languages)
+  window.RMApp = {
+    RD, state, el, MARKET_WAP, REPORT_LABEL, STALE_MONTHS,
+    rateNum, fmtRate, fmtMonth, parseMonth, isStaleRate, isDistributionUtility, escapeHtml, peso, signedPeso,
+    selectDu, switchView, renderMarkers, recalcSavings, updateCalculatorModeUI, showToast, runDataChecks,
+    selectDuById(id, fly = true) {
+      const du = (RD.dus || []).find((d) => d.id === id);
+      if (du) selectDu(du, fly);
+      return du;
+    },
+  };
 
   // DOM Ready
   if (document.readyState === "loading") {

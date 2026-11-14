@@ -631,7 +631,8 @@ final_output = {
     "offgrid_exempt": OFFGRID_EXEMPT_DUS
 }
 
-out_dir = "/Users/franzxyrloi.tobias/Desktop/github/brute force/App_Retailmarket"
+# Write next to this script, wherever the app folder lives
+out_dir = os.path.dirname(os.path.abspath(__file__))
 json_path = os.path.join(out_dir, "data.json")
 js_path = os.path.join(out_dir, "data.js")
 

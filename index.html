@@ -2,24 +2,35 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>RetailMarket PH — Apple Minimalist Mobile Power Choice App</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>RetailMarket PH — Retail Electricity Market Explorer</title>
 
   <!-- Mobile Apple iOS & Android App Settings -->
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="RetailMarket">
-  <meta name="theme-color" content="#ffffff">
+  <meta name="theme-color" content="#14213d">
+  <meta name="color-scheme" content="light only">
   <meta name="format-detection" content="telephone=no">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚡</text></svg>">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22></text></svg>">
 
   <!-- Local Leaflet CSS -->
   <link rel="stylesheet" href="vendor/leaflet.css">
 
   <!-- Apple-Inspired Clean Minimalist Mobile Stylesheet -->
   <link rel="stylesheet" href="style.css">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
 </head>
 <body>
+
+<aside class="desk-intro" aria-hidden="true">
+  <div class="desk-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8z"/></svg></div>
+  <h1 class="desk-title">RetailMarket PH</h1>
+  <p class="desk-lede">Who buys electricity on the open market, from whom, and at what price, for every on-grid utility in the Philippines.</p>
+  <dl class="desk-facts" id="deskFacts"></dl>
+  <p class="desk-hint">Circle size on the map shows contracted demand in MW. Tap a circle to open the utility.</p>
+</aside>
 
 <div id="app">
 
@@ -40,21 +51,21 @@
       <header class="top-panel">
         <!-- Row 1: Brand + Search Bar + Quick Actions -->
         <div class="search-action-bar">
-          <div class="brand-pill" title="Strictly On-Grid (WESM Interconnected)">
-            <span class="brand-bolt">⚡</span>
+          <div class="brand-pill" id="brandPill" role="button" tabindex="0" title="About this app &amp; data checks">
+            <span class="brand-bolt"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8z"/></svg></span>
           </div>
 
           <div class="search-input-wrap">
-            <span class="search-icon">🔍</span>
-            <input type="text" id="searchInput" class="search-input" placeholder="Search 107 DUs, provinces..." autocomplete="off" spellcheck="false">
+            <span class="search-icon"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/></svg></span>
+            <input type="text" id="searchInput" class="search-input" placeholder="Search utilities, provinces..." autocomplete="off" spellcheck="false">
             <button id="clearSearchBtn" class="clear-btn" title="Clear">✕</button>
           </div>
 
           <div class="action-buttons">
-            <button class="icon-btn" id="openPricesBtn" title="All-in-One Power Market Prices (WESM Spot &amp; Retail)">💹</button>
-            <button class="icon-btn" id="openCompareBtn" title="Compare 2 DUs Side-by-Side">⚖️</button>
-            <button class="icon-btn" id="openRoadmapBtn" title="RCOA 2027–2031 Proposed Roadmap">🗺️</button>
-            <button class="icon-btn reset-btn" id="resetBtn" title="Reset All Filters &amp; Map">↺</button>
+            <button class="icon-btn" id="openPricesBtn" title="Market prices: spot, retail and captive" aria-label="Market prices"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18M7 15l4-4 3 3 6-7"/></svg></button>
+            <button class="icon-btn" id="openCompareBtn" title="Compare two utilities" aria-label="Compare utilities"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7h13l-3.5-3.5M17 17H4l3.5 3.5"/></svg></button>
+            <button class="icon-btn" id="openRoadmapBtn" title="RCOA roadmap 2027–2031" aria-label="Roadmap"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 21V4M5 4h11l-2.5 4L16 12H5"/></svg></button>
+            <button class="icon-btn reset-btn" id="resetBtn" title="Reset filters and map" aria-label="Reset"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 2.8-6.5L3 8M3 3v5h5"/></svg></button>
           </div>
         </div>
 
@@ -74,15 +85,15 @@
 
           <div class="filter-group">
             <button class="program-pill crem active" data-filter="all">All</button>
-            <button class="program-pill crem" data-filter="crem">🔵 CREM</button>
-            <button class="program-pill geop" data-filter="geop">🟢 GEOP</button>
-            <button class="program-pill rap" data-filter="rap">🟠 RAP</button>
+            <button class="program-pill crem" data-filter="crem">CREM</button>
+            <button class="program-pill geop" data-filter="geop">GEOP</button>
+            <button class="program-pill rap" data-filter="rap">RAP</button>
           </div>
         </div>
 
         <!-- Row 3: Live Dynamic Statistics Ticker Ribbon -->
         <div class="stats-ribbon" id="statsRibbon">
-          <span class="ribbon-item" id="ribbonDUs">⚡ 107 On-Grid DUs</span>
+          <span class="ribbon-item" id="ribbonDUs">On-Grid DUs</span>
           <span class="ribbon-dot">·</span>
           <span class="ribbon-item" id="ribbonCREM">2,692 CREM EUs (5,081 MW)</span>
           <span class="ribbon-dot">·</span>
@@ -109,7 +120,7 @@
               <span class="du-acronym" id="cardAcronym">MERALCO</span>
               <span class="badge-tag grid" id="cardGridBadge">Luzon</span>
               <span class="badge-tag type" id="cardTypeBadge">PDU</span>
-              <span class="badge-tag ongrid">⚡ On-Grid</span>
+              <span class="badge-tag ongrid">On-Grid</span>
             </div>
             <button class="card-chevron-btn" id="cardToggleBtn" aria-label="Toggle details">▲</button>
           </div>
@@ -118,17 +129,17 @@
           <!-- 3-Pillar Metrics Strip -->
           <div class="metrics-strip">
             <div class="stat-box crem">
-              <div class="stat-tag">🔵 CREM</div>
+              <div class="stat-tag">CREM</div>
               <div class="stat-val" id="cardCremEus">1,934 <span class="stat-unit">EUs</span></div>
               <div class="stat-mw" id="cardCremMw">3,560.0 MW</div>
             </div>
             <div class="stat-box geop">
-              <div class="stat-tag">🟢 GEOP</div>
+              <div class="stat-tag">GEOP</div>
               <div class="stat-val" id="cardGeopEus">808 <span class="stat-unit">EUs</span></div>
               <div class="stat-mw" id="cardGeopMw">242.8 MW</div>
             </div>
             <div class="stat-box rap">
-              <div class="stat-tag">🟠 RAP Aggreg.</div>
+              <div class="stat-tag">RAP Aggreg.</div>
               <div class="stat-val" id="cardRapGroups">287 <span class="stat-unit">grp</span></div>
               <div class="stat-mw" id="cardRapMw">231.3 MW</div>
             </div>
@@ -137,7 +148,7 @@
           <!-- Quick Regulatory Sub-strip (Base Rate, WESM Rate, Switching Penetration) -->
           <div class="regulatory-strip">
             <span>Base: <strong id="cardBaseRate">₱7.3300/kWh</strong></span>
-            <span>WESM: <strong id="cardWesmRate" style="color:#7c3aed;">₱5.4513</strong></span>
+            <span>WESM: <strong id="cardWesmRate" style="color:#6b46c1;">₱5.4513</strong></span>
             <span>Switch: <strong id="cardPenetrationVal">95.7%</strong></span>
           </div>
         </div>
@@ -145,16 +156,16 @@
         <!-- Internal Sub-Tabs in Expanded Drawer -->
         <div class="card-drawer" id="cardDrawer">
           <div class="drawer-tabs">
-            <button class="drawer-tab active" data-dtab="overview">📊 Overview</button>
-            <button class="drawer-tab" data-dtab="psas">📜 PSAs &amp; Carve-Outs</button>
-            <button class="drawer-tab" data-dtab="suppliers">🏢 RES Suppliers</button>
-            <button class="drawer-tab" data-dtab="phases">📈 Migration Waves</button>
+            <button class="drawer-tab active" data-dtab="overview">Overview</button>
+            <button class="drawer-tab" data-dtab="psas">PSAs &amp; Carve-Outs</button>
+            <button class="drawer-tab" data-dtab="suppliers">RES Suppliers</button>
+            <button class="drawer-tab" data-dtab="phases">Migration Waves</button>
           </div>
 
           <!-- Drawer Tab Content 1: Overview -->
           <div class="dtab-content active" id="dtabOverview">
             <div class="drawer-section">
-              <div class="drawer-heading">⚖️ Multi-Market Price Benchmarks</div>
+              <div class="drawer-heading">Multi-Market Price Benchmarks</div>
               <div class="benchmark-grid four-way">
                 <div class="benchmark-box">
                   <div class="benchmark-label">DU Captive Base</div>
@@ -180,10 +191,10 @@
             </div>
 
             <div class="drawer-section">
-              <div class="drawer-heading">🌐 Interconnection &amp; Status</div>
+              <div class="drawer-heading">Interconnection &amp; Status</div>
               <div class="grid-status-pills">
-                <span class="status-chip ongrid">⚡ WESM Grid Interconnected</span>
-                <span class="status-chip contestable">⚖️ EPIRA Sec. 31 Contestable</span>
+                <span class="status-chip ongrid">WESM Grid Interconnected</span>
+                <span class="status-chip contestable">EPIRA Sec. 31 Contestable</span>
               </div>
             </div>
           </div>
@@ -191,13 +202,13 @@
           <!-- Drawer Tab Content 2: PSAs & Carve-Outs (Salient Terms, Rates & Tenor) -->
           <div class="dtab-content" id="dtabPsas">
             <div class="drawer-section">
-              <div class="drawer-heading">📜 Bilateral Power Supply Agreements (PSAs)</div>
+              <div class="drawer-heading">Bilateral Power Supply Agreements (PSAs)</div>
               <div id="cardPsaSummary" class="psa-portfolio-summary"></div>
               <div class="psa-filter-row" id="psaFilterRow">
                 <button class="psa-chip active" data-pfilter="all">All (PSAs + WESM)</button>
-                <button class="psa-chip carved" data-pfilter="carved">🟢 Carve-Out</button>
-                <button class="psa-chip locked" data-pfilter="locked">🔴 Locked TOP</button>
-                <button class="psa-chip wesm" data-pfilter="wesm">⚡ WESM Spot</button>
+                <button class="psa-chip carved" data-pfilter="carved">Carve-Out</button>
+                <button class="psa-chip locked" data-pfilter="locked">Locked TOP</button>
+                <button class="psa-chip wesm" data-pfilter="wesm">WESM Spot</button>
               </div>
               <div class="psas-list" id="cardPsasList"></div>
             </div>
@@ -206,7 +217,7 @@
           <!-- Drawer Tab Content 3: Suppliers -->
           <div class="dtab-content" id="dtabSuppliers">
             <div class="drawer-section">
-              <div class="drawer-heading">🏢 Top Licensed Retail Suppliers (RES)</div>
+              <div class="drawer-heading">Top Licensed Retail Suppliers (RES)</div>
               <div class="suppliers-list" id="cardSuppliersList"></div>
             </div>
           </div>
@@ -214,11 +225,11 @@
           <!-- Drawer Tab Content 4: Migration Waves -->
           <div class="dtab-content" id="dtabPhases">
             <div class="drawer-section">
-              <div class="drawer-heading">📊 Customer Migration Breakdown (Phases I–IV)</div>
+              <div class="drawer-heading">Customer Migration Breakdown (Phases I–IV)</div>
               <div class="phases-grid" id="cardPhaseBreakdown"></div>
             </div>
             <div class="drawer-section">
-              <div class="drawer-heading">⏳ Phase V Pipeline (50–99 kW Wave)</div>
+              <div class="drawer-heading">Phase V Pipeline (50–99 kW Wave)</div>
               <div class="pipeline-card" id="cardPipelineCard"></div>
             </div>
           </div>
@@ -233,28 +244,28 @@
       <div class="view-header">
         <div class="view-title-row">
           <div>
-            <div class="view-title">107 On-Grid Utilities Directory</div>
+            <div class="view-title">On-Grid Utilities Directory</div>
             <div class="view-sub">WESM-Interconnected Power Distributors &amp; URR Rates</div>
           </div>
-          <span class="badge-count" id="dirCountBadge">107 DUs</span>
+          <span class="badge-count" id="dirCountBadge">DUs</span>
         </div>
 
         <!-- Search in Directory -->
         <div class="search-input-wrap" style="margin-top:8px;">
-          <span class="search-icon">🔍</span>
+          <span class="search-icon"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/></svg></span>
           <input type="text" id="dirSearchInput" class="search-input" placeholder="Search by name, province, or acronym..." autocomplete="off">
           <button id="clearDirBtn" class="clear-btn" title="Clear">✕</button>
         </div>
 
         <!-- Sort Chips -->
         <div class="dir-sort-bar">
-          <span style="font-size:10px; color:#64748b; font-weight:700;">Sort by:</span>
+          <span style="font-size:10px; color:#66728a; font-weight:700;">Sort by:</span>
           <button class="dir-sort-chip active" data-sort="crem_mw">CREM MW</button>
           <button class="dir-sort-chip" data-sort="geop_eus">GEOP EUs</button>
           <button class="dir-sort-chip" data-sort="rap_groups">RAP Grps</button>
           <button class="dir-sort-chip" data-sort="base_rate">Base Rate</button>
-          <button class="dir-sort-chip" data-sort="wesm_rate">⚡ WESM Rate</button>
-          <button class="dir-sort-chip" data-sort="psas">📜 PSAs</button>
+          <button class="dir-sort-chip" data-sort="wesm_rate">WESM Rate</button>
+          <button class="dir-sort-chip" data-sort="psas">PSAs</button>
           <button class="dir-sort-chip" data-sort="switching">Switching %</button>
         </div>
       </div>
@@ -273,15 +284,15 @@
             <div class="view-title">Power Choice Savings Calculator</div>
             <div class="view-sub">Evaluate CREM, GEOP &amp; Retail Aggregation (RAP)</div>
           </div>
-          <button class="action-link-btn" id="copyCalcReportBtn">📋 Copy</button>
+          <button class="action-link-btn" id="copyCalcReportBtn">Copy</button>
         </div>
 
         <!-- Program Mode Segmented Switcher -->
         <div class="calc-mode-bar">
-          <button class="calc-mode-pill active crem" data-mode="crem">🔵 CREM Retail</button>
-          <button class="calc-mode-pill geop" data-mode="geop">🟢 GEOP Green</button>
-          <button class="calc-mode-pill rap" data-mode="rap">🟠 RAP Aggregator</button>
-          <button class="calc-mode-pill wesm" data-mode="wesm">⚡ WESM Spot</button>
+          <button class="calc-mode-pill active crem" data-mode="crem">CREM Retail</button>
+          <button class="calc-mode-pill geop" data-mode="geop">GEOP Green</button>
+          <button class="calc-mode-pill rap" data-mode="rap">RAP Aggregator</button>
+          <button class="calc-mode-pill wesm" data-mode="wesm">Spot Ref.</button>
         </div>
       </div>
 
@@ -290,7 +301,7 @@
         <div class="calc-card">
           <!-- Dynamic Mode Title -->
           <div class="calc-card-title-row">
-            <span class="calc-card-mode-title" id="calcModeTitle">🔵 Individual Retail Open Access (CREM)</span>
+            <span class="calc-card-mode-title" id="calcModeTitle">Individual Retail Open Access (CREM)</span>
             <span class="calc-threshold-badge" id="calcThresholdBadge">Threshold: 100 kW</span>
           </div>
 
@@ -339,21 +350,23 @@
             <div class="rap-pool-summary">
               <span>Pooled Group Demand:</span>
               <strong id="calcRapTotalKw">150 kW</strong>
-              <span class="rap-pool-status" id="calcRapPoolStatus">✅ Surpasses 100 kW</span>
+              <span class="rap-pool-status" id="calcRapPoolStatus">Surpasses 100 kW</span>
             </div>
           </div>
 
           <!-- Monthly Consumption -->
           <div class="calc-field" style="margin-top:10px;">
-            <label for="calcKwhInput">Monthly Energy Consumption (kWh / month)</label>
-            <input type="number" id="calcKwhInput" value="65000" min="1000" step="1000" class="calc-number-input">
+            <label for="calcKwhInput" id="calcKwhLabel">Monthly Energy Consumption (kWh / month)</label>
+            <input type="number" id="calcKwhInput" value="65700" min="0" step="100" inputmode="numeric" class="calc-number-input">
+            <div class="calc-hint">Auto-filled at 60% load factor from the demand above. Type your own figure to override.</div>
+            <div class="calc-warning" id="calcLfWarning" style="display:none;"></div>
           </div>
         </div>
 
         <!-- Result Verdict Card -->
         <div class="calc-card result-card" id="calcResultCard">
           <div class="verdict-banner" id="verdictBanner">
-            <span class="verdict-icon" id="verdictIcon">✅</span>
+            <span class="verdict-icon" id="verdictIcon">✓</span>
             <div>
               <div class="verdict-title" id="verdictTitle">Phase IV Unified Contestable (≥100 kW)</div>
               <div class="verdict-sub" id="verdictSub">Eligible for CREM Open Access and GEOP 100% Renewable</div>
@@ -363,16 +376,18 @@
           <!-- Savings Projection Grid -->
           <div class="savings-grid">
             <div class="saving-box">
-              <div class="saving-label">Estimated Monthly Savings</div>
+              <div class="saving-label" id="calcMonthlyLabel">Estimated Monthly Savings</div>
               <div class="saving-val" id="calcMonthlySavings">₱97,500</div>
               <div class="saving-sub" id="calcMonthlySub">vs. DU captive base rate</div>
             </div>
             <div class="saving-box highlight">
-              <div class="saving-label">Projected Annual Savings</div>
+              <div class="saving-label" id="calcAnnualLabel">Projected Annual Savings</div>
               <div class="saving-val" id="calcAnnualSavings">₱1,170,000</div>
               <div class="saving-sub" id="calcAnnualSub">at Market WAP (₱5.83/kWh)</div>
             </div>
           </div>
+
+          <div class="calc-rate-note" id="calcRateNote"></div>
 
           <!-- Extra Metric: GEOP Environmental Benefit or RAP Per-Member Breakdown -->
           <div class="extra-metric-card" id="calcExtraMetricCard" style="display:none;"></div>
@@ -393,14 +408,14 @@
             <div class="view-title">Suppliers &amp; Market Rates</div>
             <div class="view-sub">CREM RES · GEOP Green Suppliers · RAP Aggregators</div>
           </div>
-          <span class="badge-count" id="suppCountBadge">39 RES</span>
+          <span class="badge-count" id="suppCountBadge">RES</span>
         </div>
 
         <!-- Supplier Category Switcher -->
         <div class="calc-mode-bar" style="margin-top:8px;">
-          <button class="calc-mode-pill active crem" data-stype="res">🔵 RES Suppliers (41)</button>
-          <button class="calc-mode-pill geop" data-stype="geop">🟢 GEOP Green (15)</button>
-          <button class="calc-mode-pill rap" data-stype="rap">🟠 Aggregators (20)</button>
+          <button class="calc-mode-pill active crem" data-stype="res">RES Suppliers (41)</button>
+          <button class="calc-mode-pill geop" data-stype="geop">GEOP Green (15)</button>
+          <button class="calc-mode-pill rap" data-stype="rap">Aggregators (20)</button>
         </div>
 
         <!-- Supplier Market Overview Banner -->
@@ -408,7 +423,7 @@
 
         <!-- Supplier Search Bar -->
         <div class="search-input-wrap" style="margin-top:6px;">
-          <span class="search-icon">🔍</span>
+          <span class="search-icon"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/></svg></span>
           <input type="text" id="suppSearchInput" class="search-input" placeholder="Search suppliers, groups, energy tech, shortname..." autocomplete="off">
           <button id="clearSuppBtn" class="clear-btn" title="Clear">✕</button>
         </div>
@@ -436,7 +451,7 @@
 
         <!-- Search in FAQ -->
         <div class="search-input-wrap" style="margin-top:8px;">
-          <span class="search-icon">🔍</span>
+          <span class="search-icon"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/></svg></span>
           <input type="text" id="faqSearchInput" class="search-input" placeholder="Search 501 questions (threshold, switching, rap, solr, condo)..." autocomplete="off">
           <button id="clearFaqBtn" class="clear-btn">✕</button>
         </div>
@@ -444,13 +459,13 @@
         <!-- Category Filter Chips -->
         <div class="faq-chips-row">
           <button class="faq-chip active" data-q="">All (501)</button>
-          <button class="faq-chip" data-q="threshold">⚡ Threshold</button>
-          <button class="faq-chip" data-q="switching">🔄 Switching</button>
-          <button class="faq-chip" data-q="retail aggregation">📦 RAP</button>
-          <button class="faq-chip" data-q="green energy option">🌱 GEOP</button>
-          <button class="faq-chip" data-q="supplier of last resort">🛡️ SOLR</button>
-          <button class="faq-chip" data-q="condominium">🏢 Condos</button>
-          <button class="faq-chip" data-q="metering">📊 Metering</button>
+          <button class="faq-chip" data-q="threshold">Threshold</button>
+          <button class="faq-chip" data-q="switching">Switching</button>
+          <button class="faq-chip" data-q="retail aggregation">RAP</button>
+          <button class="faq-chip" data-q="green energy option">GEOP</button>
+          <button class="faq-chip" data-q="supplier of last resort">SOLR</button>
+          <button class="faq-chip" data-q="condominium">Condos</button>
+          <button class="faq-chip" data-q="metering">Metering</button>
         </div>
       </div>
 
@@ -465,24 +480,24 @@
        ======================================================================== -->
   <nav class="bottom-nav-bar">
     <button class="nav-tab active" data-view="viewMap">
-      <span class="nav-icon">🗺️</span>
+      <span class="nav-icon"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2zM9 4v14M15 6v14"/></svg></span>
       <span class="nav-label">Map</span>
     </button>
     <button class="nav-tab" data-view="viewDirectory">
-      <span class="nav-icon">📊</span>
+      <span class="nav-icon"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01"/></svg></span>
       <span class="nav-label">Directory</span>
     </button>
     <button class="nav-tab" data-view="viewCalculator">
-      <span class="nav-icon">⚡</span>
+      <span class="nav-icon"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="2.5" width="15" height="19" rx="2.5"/><path d="M8 7h8M8 12h.01M12 12h.01M16 12h.01M8 16h.01M12 16h.01M16 16h.01"/></svg></span>
       <span class="nav-label">Calculator</span>
     </button>
     <button class="nav-tab" data-view="viewSuppliers">
-      <span class="nav-icon">🏢</span>
+      <span class="nav-icon"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21V10l6 4v-4l6 4V5h6v16zM3 21h18"/></svg></span>
       <span class="nav-label">Suppliers</span>
     </button>
     <button class="nav-tab" data-view="viewFaq">
-      <span class="nav-icon">💡</span>
-      <span class="nav-label">501 FAQ</span>
+      <span class="nav-icon"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9.5"/><path d="M9.6 9.2a2.5 2.5 0 1 1 3.4 2.3c-.6.3-1 .9-1 1.5v.6M12 17h.01"/></svg></span>
+      <span class="nav-label">FAQ</span>
     </button>
   </nav>
 
@@ -494,20 +509,20 @@
       <div class="modal-drag-handle"></div>
       <div class="modal-header">
         <div class="modal-title-wrap">
-          <span style="font-size:18px;">💹</span>
+          <span style="font-size:18px;"></span>
           <div>
             <div class="modal-title">All-in-One Power Market Monitor</div>
             <div class="modal-sub">Wholesale Spot (WESM) · Retail (CREM/GEOP/RAP) · Captive Tariffs</div>
           </div>
         </div>
-        <button class="modal-close-btn" id="closePricesBtn">✕</button>
+        <button class="modal-close-btn" id="closePricesBtn" aria-label="Close">✕</button>
       </div>
 
       <!-- Market Mode Segmented Tabs -->
       <div class="prices-mode-bar">
-        <button class="prices-mode-tab active" data-pmode="matrix">📊 Multi-Market</button>
-        <button class="prices-mode-tab" data-pmode="spot">⚡ Spot GWAP</button>
-        <button class="prices-mode-tab" data-pmode="arbitrage">🔍 DU Arbitrage</button>
+        <button class="prices-mode-tab active" data-pmode="matrix">Multi-Market</button>
+        <button class="prices-mode-tab" data-pmode="spot">Spot GWAP</button>
+        <button class="prices-mode-tab" data-pmode="arbitrage">DU Arbitrage</button>
       </div>
 
       <div class="modal-scroll-area" id="pricesContainer"></div>
@@ -522,19 +537,19 @@
       <div class="modal-drag-handle"></div>
       <div class="modal-header">
         <div class="modal-title-wrap">
-          <span style="font-size:18px;">🗺️</span>
+          <span style="font-size:18px;"></span>
           <div>
             <div class="modal-title">Power of Choice for Every Filipino</div>
-            <div class="modal-sub">ERC Five-Year Roadmap (2027–2031) · October 2026 Draft</div>
+            <div class="modal-sub">ERC Five-Year Roadmap (2027–2031)</div>
           </div>
         </div>
-        <button class="modal-close-btn" id="closeRoadmapBtn">✕</button>
+        <button class="modal-close-btn" id="closeRoadmapBtn" aria-label="Close">✕</button>
       </div>
 
       <!-- Roadmap Timeline Mode Switcher -->
       <div class="roadmap-mode-bar">
-        <button class="roadmap-mode-tab active" data-rmode="proposed">📜 Proposed Roadmap (2027–2031)</button>
-        <button class="roadmap-mode-tab" data-rmode="historical">🏛️ Historical Phases (2013–2026)</button>
+        <button class="roadmap-mode-tab active" data-rmode="proposed">Proposed Roadmap (2027–2031)</button>
+        <button class="roadmap-mode-tab" data-rmode="historical">Historical Phases (2013–2026)</button>
       </div>
 
       <div class="modal-scroll-area" id="roadmapContainer"></div>
@@ -549,13 +564,13 @@
       <div class="modal-drag-handle"></div>
       <div class="modal-header">
         <div class="modal-title-wrap">
-          <span style="font-size:18px;">⚖️</span>
+          <span style="font-size:18px;"></span>
           <div>
             <div class="modal-title">Side-by-Side Utility Comparator</div>
             <div class="modal-sub">Compare Captive Rates, Contestable EUs &amp; Market Penetration</div>
           </div>
         </div>
-        <button class="modal-close-btn" id="closeCompareBtn">✕</button>
+        <button class="modal-close-btn" id="closeCompareBtn" aria-label="Close">✕</button>
       </div>
 
       <div class="modal-scroll-area" style="padding:12px;">
@@ -575,6 +590,26 @@
     </div>
   </div>
 
+  <!-- ========================================================================
+       ABOUT & DATA NOTES MODAL (sources, assumptions, live data checks)
+       ======================================================================== -->
+  <div class="modal-overlay" id="dataNotesModal" role="dialog" aria-modal="true" aria-labelledby="dataNotesTitle">
+    <div class="modal-sheet">
+      <div class="modal-drag-handle"></div>
+      <div class="modal-header">
+        <div class="modal-title-wrap">
+          <span style="font-size:18px;">ⓘ</span>
+          <div>
+            <div class="modal-title" id="dataNotesTitle">About the Data</div>
+            <div class="modal-sub">Sources · Calculator assumptions · Data checks</div>
+          </div>
+        </div>
+        <button class="modal-close-btn" id="closeDataNotesBtn" aria-label="Close">✕</button>
+      </div>
+      <div class="modal-scroll-area" id="dataNotesContainer" style="padding:12px;"></div>
+    </div>
+  </div>
+
   <!-- Floating Toast Notification -->
   <div class="toast-banner" id="toastNotification"></div>
 
@@ -589,8 +624,17 @@
 <!-- 501 Guide Questions Dataset -->
 <script src="faq_data.js"></script>
 
+<!-- Roadmap impact, trends, map additions and guide (tools/build_extras.py) -->
+<script src="extras.js"></script>
+
+<!-- Latest-filing comparison (tools/update_check.py); optional -->
+<script src="changes.js"></script>
+
 <!-- Clean Mobile Application Logic -->
 <script src="app.js"></script>
+
+<!-- Feature layer: simulator, whole bill, market structure, sharing, guide, languages -->
+<script src="features.js"></script>
 
 </body>
 </html>

@@ -1,3 +1,4 @@
+import os
 import re
 import json
 
@@ -346,7 +347,7 @@ for r in rap_rows:
 print(f"Processed RAP Aggregators: {len(rap_list)}")
 
 # 4. Save to data.json and data.js
-data_path = "/Users/franzxyrloi.tobias/Desktop/github/brute force/App_Retailmarket/data.json"
+data_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data.json")
 with open(data_path) as f:
     full_data = json.load(f)
 
@@ -391,7 +392,7 @@ with open(data_path, 'w') as f:
     json.dump(full_data, f, indent=2)
 print("Updated data.json successfully")
 
-data_js_path = "/Users/franzxyrloi.tobias/Desktop/github/brute force/App_Retailmarket/data.js"
+data_js_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data.js")
 with open(data_js_path, 'w') as f:
     f.write("// Complete Retail Market Dataset with Verified PSAs, Suppliers (RES, GEOP, RAP) & Rates\n")
     f.write("window.RETAIL_MARKET_DATA = ")

@@ -1,4 +1,5 @@
 # RetailMarket PH — Apple Minimalist Mobile Application
+> **v2 (14 Nov 2026):** see `CHANGELOG.md` for what changed and `DATA_CHECKLIST.md` for data and policy items to verify. Tap the ⚡ button in the app for live data checks.
 **Strictly On-Grid (WESM Interconnected) · Zero API Errors · 60fps Native Feel**
 
 A comprehensive, Apple/Android-grade mobile application mapping every on-grid Distribution Utility (DU / EC / Private DU) in the Philippines along with their Retail Contestable Customers (CREM), Green Energy Option Program (GEOP) customers, Retail Aggregation Program (RAP) groups, and Captive Eligible Pipeline.
